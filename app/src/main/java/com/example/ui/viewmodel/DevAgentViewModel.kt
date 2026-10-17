@@ -1,6 +1,7 @@
 package com.example.ui.viewmodel
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.api.GitHubRepositoryClient
 import com.example.data.engine.AgentExecutionEvent
@@ -12,6 +13,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.File
 import java.util.UUID
 
 data class DevAgentUiState(
@@ -30,9 +32,11 @@ data class DevAgentUiState(
     val repositoryStatus: String = ""
 )
 
-class DevAgentViewModel : ViewModel() {
+class DevAgentViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val engine = DevAgentEngine()
+    private val engine: DevAgentEngine by lazy {
+        DevAgentEngine(File(getApplication<Application>().filesDir, "devagent-workspace"))
+    }
     private val githubClient = GitHubRepositoryClient()
     private var activeJob: Job? = null
 
