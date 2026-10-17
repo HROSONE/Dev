@@ -68,13 +68,6 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
         }
     }
 
-    // Banner de atualização disponível
-    uiState.updateAvailable?.let { upd ->
-        if (!showSettingsDialog) {
-            // leve: só no topo via status; botão nas configurações
-        }
-    }
-
     if (showSettingsDialog) {
         LaunchedEffect(Unit) {
             settingsProvider = uiState.llmProvider
@@ -107,9 +100,7 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                             )
                         }
                     }
-
                     Spacer(Modifier.height(14.dp))
-
                     if (settingsProvider == LlmProvider.GEMINI) {
                         Text("Gemini API key", fontSize = 12.sp, color = TextPrimary)
                         Spacer(Modifier.height(4.dp))
@@ -178,24 +169,21 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                             )
                         )
                     }
-
                     Spacer(Modifier.height(10.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = showKeysPlain, onCheckedChange = { showKeysPlain = it })
                         Text("Mostrar chaves", fontSize = 12.sp, color = TextSecondary)
                     }
-
                     if (uiState.apiKeyStatus.isNotBlank()) {
                         Text(uiState.apiKeyStatus, fontSize = 11.sp, color = AccentCyan)
                     }
-
                     Spacer(Modifier.height(16.dp))
                     HorizontalDivider(color = DarkBorder)
                     Spacer(Modifier.height(10.dp))
-                    Text("Atualização do app", fontSize = 13.sp, color = TextPrimary)
+                    Text("Atualização", fontSize = 13.sp, color = TextPrimary)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        uiState.updateStatus.ifBlank { "Checa releases em github.com/HROSONE/Dev" },
+                        uiState.updateStatus.ifBlank { "Releases em HROSONE/Dev" },
                         fontSize = 11.sp,
                         color = TextSecondary
                     )
@@ -205,7 +193,7 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                             onClick = { viewModel.checkForAppUpdate() },
                             enabled = !uiState.isCheckingUpdate
                         ) {
-                            Text(if (uiState.isCheckingUpdate) "Checando…" else "Verificar", color = AccentCyan)
+                            Text(if (uiState.isCheckingUpdate) "…" else "Verificar", color = AccentCyan)
                         }
                         if (uiState.updateAvailable != null) {
                             TextButton(
@@ -213,7 +201,7 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                                 enabled = !uiState.isDownloadingUpdate
                             ) {
                                 Text(
-                                    if (uiState.isDownloadingUpdate) "Baixando…" else "Baixar e instalar",
+                                    if (uiState.isDownloadingUpdate) "Baixando…" else "Instalar",
                                     color = AccentGreen
                                 )
                             }
@@ -253,7 +241,12 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                     Text(mutation.path, fontSize = 13.sp, color = AccentCyan, fontFamily = FontFamily.Monospace)
                     Spacer(Modifier.height(8.dp))
                     if (mutation.diffLines.isNotEmpty()) {
-                        Box(Modifier.fillMaxWidth().heightIn(max = 180.dp).verticalScroll(rememberScrollState())) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 180.dp)
+                                .verticalScroll(rememberScrollState())
+                        ) {
                             DiffView(lines = mutation.diffLines)
                         }
                     }
@@ -276,7 +269,7 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
     if (showRepoDialog) {
         AlertDialog(
             onDismissRequest = { showRepoDialog = false },
-            title = { Text("Conectar GitHub", fontSize = 16.sp, color = TextPrimary) },
+            title = { Text("Repositório", fontSize = 16.sp, color = TextPrimary) },
             text = {
                 Column {
                     OutlinedTextField(
@@ -331,31 +324,13 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
     Scaffold(
         modifier = Modifier.fillMaxSize().background(DarkBackground),
         topBar = {
-            Column {
-                Row(
-                    Modifier.fillMaxWidth().background(DarkSurface).padding(horizontal = 8.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    val topLabel = when {
-                        uiState.updateAvailable != null -> "Update ${uiState.updateAvailable!!.versionName}"
-                        else -> uiState.llmStatusLabel.ifBlank { "LLM" }
-                    }
-                    Text(
-                        text = topLabel,
-                        fontSize = 10.sp,
-                        color = if (uiState.updateAvailable != null) AccentYellow else if (uiState.hasLlmKey) AccentGreen else AccentYellow,
-                        modifier = Modifier.weight(1f).padding(start = 4.dp),
-                        maxLines = 1
-                    )
-                    IconButton(onClick = { showSettingsDialog = true }, modifier = Modifier.testTag("open_settings_button")) {
-                        Icon(
-                            Icons.Default.Settings,
-                            "Configurações",
-                            tint = if (uiState.hasLlmKey) AccentCyan else AccentYellow
-                        )
-                    }
-                }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .background(DarkBackground)
+                    .padding(end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 AgentModeSelector(
                     selectedMode = uiState.selectedMode,
                     onModeSelected = { viewModel.setMode(it) },
@@ -365,55 +340,76 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                     onSelectRepoClick = {
                         repoInputText = uiState.activeRepo
                         showRepoDialog = true
-                    }
+                    },
+                    modifier = Modifier.weight(1f)
                 )
+                IconButton(
+                    onClick = { showSettingsDialog = true },
+                    modifier = Modifier.testTag("open_settings_button")
+                ) {
+                    Icon(
+                        Icons.Default.Settings,
+                        "Configurações",
+                        tint = if (uiState.hasLlmKey) TextSecondary else AccentYellow,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
         },
         bottomBar = {
-            NavigationBar(containerColor = DarkSurface, contentColor = AccentCyan, tonalElevation = 8.dp) {
+            NavigationBar(
+                containerColor = DarkBackground,
+                contentColor = AccentCyan,
+                tonalElevation = 0.dp
+            ) {
                 NavigationBarItem(
                     selected = uiState.activeTab == 0,
                     onClick = { viewModel.setTab(0) },
-                    icon = { Icon(Icons.Default.SmartToy, "Agente") },
-                    label = { Text("Agente", fontSize = 11.sp) },
+                    icon = { Icon(Icons.Default.ChatBubbleOutline, "Chat") },
+                    label = { Text("Chat", fontSize = 11.sp) },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = AccentCyan,
                         selectedTextColor = AccentCyan,
-                        unselectedIconColor = TextSecondary,
-                        unselectedTextColor = TextSecondary,
-                        indicatorColor = AccentCyan.copy(alpha = 0.15f)
+                        unselectedIconColor = TextMuted,
+                        unselectedTextColor = TextMuted,
+                        indicatorColor = AccentCyan.copy(alpha = 0.12f)
                     )
                 )
                 NavigationBarItem(
                     selected = uiState.activeTab == 1,
                     onClick = { viewModel.setTab(1) },
-                    icon = { Icon(Icons.Default.Terminal, "Sandbox") },
-                    label = { Text("Sandbox", fontSize = 11.sp) },
+                    icon = { Icon(Icons.Default.FolderOpen, "Arquivos") },
+                    label = { Text("Arquivos", fontSize = 11.sp) },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = AccentCyan,
                         selectedTextColor = AccentCyan,
-                        unselectedIconColor = TextSecondary,
-                        unselectedTextColor = TextSecondary,
-                        indicatorColor = AccentCyan.copy(alpha = 0.15f)
+                        unselectedIconColor = TextMuted,
+                        unselectedTextColor = TextMuted,
+                        indicatorColor = AccentCyan.copy(alpha = 0.12f)
                     )
                 )
                 NavigationBarItem(
                     selected = uiState.activeTab == 2,
                     onClick = { viewModel.setTab(2) },
-                    icon = { Icon(Icons.Default.Code, "Arquitetura") },
-                    label = { Text("Arquitetura", fontSize = 11.sp) },
+                    icon = { Icon(Icons.Default.Info, "Sobre") },
+                    label = { Text("Sobre", fontSize = 11.sp) },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = AccentCyan,
                         selectedTextColor = AccentCyan,
-                        unselectedIconColor = TextSecondary,
-                        unselectedTextColor = TextSecondary,
-                        indicatorColor = AccentCyan.copy(alpha = 0.15f)
+                        unselectedIconColor = TextMuted,
+                        unselectedTextColor = TextMuted,
+                        indicatorColor = AccentCyan.copy(alpha = 0.12f)
                     )
                 )
             }
         }
     ) { innerPadding ->
-        Box(Modifier.fillMaxSize().padding(innerPadding).background(DarkBackground)) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .background(DarkBackground)
+        ) {
             when (uiState.activeTab) {
                 0 -> AgentChatScreen(
                     messages = uiState.messages,
