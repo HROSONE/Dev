@@ -103,7 +103,7 @@ class AgentToolCoordinatorTest {
         assertEquals(
             AgentToolExecution.Completed(
                 "read_file",
-                "xxxxxxxxxxxxxxxxxxxx\\n[Conteúdo truncado pelo limite de saída.]"
+                "xxxxxxxxxxxxxxxxxxxx\n[Conteúdo truncado pelo limite de saída.]"
             ),
             AgentToolCoordinator(WorkspaceFileTools(root), maxOutputChars = 20).execute(
                 """{"tool":"read_file","path":"large.txt"}""",
