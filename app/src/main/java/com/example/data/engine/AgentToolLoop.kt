@@ -42,6 +42,15 @@ class AgentToolLoop(
                 )
             }
 
+            // Once the budget is exhausted, inspect the next model response without executing it.
+            // A tool request at this point must fail closed; even read-only tools must not run.
+            if (finalOnly && AgentToolRequestParser.parse(response) != null) {
+                return AgentLoopResult.Failed(
+                    "O modelo solicitou outra ferramenta após atingir o limite; ciclo interrompido.",
+                    toolCalls
+                )
+            }
+
             when (val execution = coordinator.execute(response, mode, intent)) {
                 is AgentToolExecution.NotToolRequest ->
                     return AgentLoopResult.FinalAnswer(execution.response, toolCalls)
