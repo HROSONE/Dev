@@ -9,6 +9,7 @@ import com.example.data.model.RepoFile
 import com.example.data.model.ToolCallInfo
 import com.example.data.model.ToolType
 import java.io.File
+import java.io.IOException
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -25,6 +26,14 @@ sealed class AgentExecutionEvent {
         val path: String,
         val contentPreview: String
     ) : AgentExecutionEvent()
+}
+
+data class WorkspaceSyncResult(
+    val copiedFiles: Int,
+    val failedFiles: List<String>,
+    val errors: List<String>
+) {
+    val succeeded: Boolean get() = failedFiles.isEmpty()
 }
 
 class DevAgentEngine(
@@ -220,17 +229,47 @@ class DevAgentEngine(
         return output.toString().take(maxContextChars)
     }
 
-    fun syncRepositoryToWorkspace(files: List<RepoFile>) {
-        if (!workspaceRoot.exists()) workspaceRoot.mkdirs()
+    /**
+     * Copies repository files into the app-owned workspace and reports partial failures.
+     * Invalid paths and I/O errors are surfaced to the caller instead of being silently ignored.
+     */
+    fun syncRepositoryToWorkspace(files: List<RepoFile>): WorkspaceSyncResult {
+        val root = workspaceRoot.canonicalFile
+        if (!root.exists() && !root.mkdirs()) {
+            return WorkspaceSyncResult(
+                copiedFiles = 0,
+                failedFiles = files.map { it.path },
+                errors = listOf("Não foi possível criar o workspace: ${root.path}")
+            )
+        }
+        if (!root.isDirectory) {
+            return WorkspaceSyncResult(
+                copiedFiles = 0,
+                failedFiles = files.map { it.path },
+                errors = listOf("A raiz do workspace não é um diretório: ${root.path}")
+            )
+        }
+
+        var copied = 0
+        val failed = mutableListOf<String>()
+        val errors = mutableListOf<String>()
         for (file in files) {
             try {
-                val target = File(workspaceRoot, file.path).canonicalFile
-                if (!target.toPath().startsWith(workspaceRoot.canonicalFile.toPath())) continue
-                target.parentFile?.mkdirs()
+                val target = File(root, file.path).canonicalFile
+                if (target == root || !target.toPath().startsWith(root.toPath())) {
+                    throw IOException("Caminho fora dos limites do workspace.")
+                }
+                if (!target.parentFile.exists() && !target.parentFile.mkdirs()) {
+                    throw IOException("Não foi possível criar a pasta de destino.")
+                }
                 target.writeText(file.content, Charsets.UTF_8)
-            } catch (_: Exception) {
+                copied++
+            } catch (e: Exception) {
+                failed += file.path
+                errors += "${file.path}: ${e.message ?: e.javaClass.simpleName}"
             }
         }
+        return WorkspaceSyncResult(copiedFiles = copied, failedFiles = failed, errors = errors)
     }
 }
 
