@@ -17,7 +17,7 @@ import java.util.UUID
 data class DevAgentUiState(
     val selectedMode: AgentMode = AgentMode.BUILD,
     val selectedSpeed: ReasoningSpeed = ReasoningSpeed.DEEP_THINKING,
-    val activeRepo: String = "octocat/modern-auth-service",
+    val activeRepo: String = "",
     val messages: List<ChatMessage> = emptyList(),
     val isThinking: Boolean = false,
     val thinkingSeconds: Double = 0.0,
