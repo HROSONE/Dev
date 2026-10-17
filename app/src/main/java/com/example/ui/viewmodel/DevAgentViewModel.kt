@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.api.ApiKeyStore
 import com.example.data.api.GeminiClient
 import com.example.data.api.GitHubRepositoryClient
+import com.example.data.api.LlmGateway
+import com.example.data.api.OpenRouterClient
 import com.example.data.engine.AgentExecutionEvent
 import com.example.data.engine.DevAgentEngine
 import com.example.data.engine.WorkspaceCommandRunner
@@ -44,9 +46,10 @@ data class DevAgentUiState(
     val isCommitting: Boolean = false,
     val lastCommitStatus: String = "",
     val hasWriteToken: Boolean = false,
-    /** true se há chave Gemini (usuário ou BuildConfig). */
-    val hasGeminiKey: Boolean = false,
-    /** Status após salvar chave (feedback na UI). */
+    val hasLlmKey: Boolean = false,
+    val llmProvider: LlmProvider = LlmProvider.GEMINI,
+    val openRouterModelId: String = LlmProvider.DEFAULT_OPENROUTER_MODEL,
+    val llmStatusLabel: String = "",
     val apiKeyStatus: String = ""
 )
 
@@ -67,41 +70,59 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
     val uiState: StateFlow<DevAgentUiState> = _uiState.asStateFlow()
 
     init {
-        // Carrega chave salva e aplica no client
-        val key = apiKeyStore.resolveGeminiKey()
-        if (key.isNotBlank()) {
-            GeminiClient.setApiKey(key)
-        }
+        applyStoredLlmConfig()
+    }
+
+    private fun applyStoredLlmConfig() {
+        val provider = apiKeyStore.getProvider()
+        val orModel = apiKeyStore.getOpenRouterModelId()
+        val geminiKey = apiKeyStore.resolveGeminiKey()
+        val orKey = apiKeyStore.getOpenRouterKey()
+
+        if (geminiKey.isNotBlank()) GeminiClient.setApiKey(geminiKey)
+        if (orKey.isNotBlank()) OpenRouterClient.setApiKey(orKey)
+
+        LlmGateway.activeProvider = provider
+        LlmGateway.openRouterModelId = orModel
+
         _uiState.update {
-            it.copy(hasGeminiKey = apiKeyStore.isConfigured())
+            it.copy(
+                llmProvider = provider,
+                openRouterModelId = orModel,
+                hasLlmKey = LlmGateway.isConfigured(),
+                llmStatusLabel = LlmGateway.statusLabel()
+            )
         }
     }
 
-    /** Retorna a chave salva pelo usuário (para o campo de Configurações). */
-    fun getStoredApiKey(): String = apiKeyStore.getUserKey()
+    fun getStoredGeminiKey(): String = apiKeyStore.getGeminiKey()
+    fun getStoredOpenRouterKey(): String = apiKeyStore.getOpenRouterKey()
 
-    fun saveGeminiApiKey(key: String) {
-        val trimmed = key.trim()
-        if (trimmed.isBlank()) {
-            apiKeyStore.clearUserKey()
-            GeminiClient.setApiKey("")
-            // Pode ainda ter BuildConfig
-            val fallback = apiKeyStore.resolveGeminiKey()
-            if (fallback.isNotBlank()) GeminiClient.setApiKey(fallback)
-            _uiState.update {
-                it.copy(
-                    hasGeminiKey = apiKeyStore.isConfigured(),
-                    apiKeyStatus = if (apiKeyStore.isConfigured()) "Chave do usuário removida (usando build)." else "Chave removida."
-                )
-            }
-            return
-        }
-        apiKeyStore.setUserKey(trimmed)
-        GeminiClient.setApiKey(trimmed)
+    fun saveLlmSettings(
+        provider: LlmProvider,
+        geminiKey: String,
+        openRouterKey: String,
+        openRouterModelId: String
+    ) {
+        apiKeyStore.setProvider(provider)
+        apiKeyStore.setGeminiKey(geminiKey)
+        apiKeyStore.setOpenRouterKey(openRouterKey)
+        apiKeyStore.setOpenRouterModelId(openRouterModelId.ifBlank { LlmProvider.DEFAULT_OPENROUTER_MODEL })
+
+        val gKey = apiKeyStore.resolveGeminiKey()
+        GeminiClient.setApiKey(gKey)
+        OpenRouterClient.setApiKey(apiKeyStore.getOpenRouterKey())
+
+        LlmGateway.activeProvider = provider
+        LlmGateway.openRouterModelId = apiKeyStore.getOpenRouterModelId()
+
         _uiState.update {
             it.copy(
-                hasGeminiKey = true,
-                apiKeyStatus = "Chave Gemini salva neste aparelho."
+                llmProvider = provider,
+                openRouterModelId = LlmGateway.openRouterModelId,
+                hasLlmKey = LlmGateway.isConfigured(),
+                llmStatusLabel = LlmGateway.statusLabel(),
+                apiKeyStatus = "Salvo · ${LlmGateway.statusLabel()}"
             )
         }
     }
@@ -157,8 +178,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                             selectedFile = files.firstOrNull(),
                             isConnectingRepo = false,
                             hasWriteToken = sessionToken.isNotBlank(),
-                            repositoryStatus = "Conectado a ${snapshot.fullName} · branch ${snapshot.defaultBranch} · " +
-                                "${files.size} arquivos · token ${if (sessionToken.isBlank()) "público" else "em memória"}"
+                            repositoryStatus = "Conectado a ${snapshot.fullName} · ${files.size} arquivos"
                         )
                     }
                 },
@@ -181,7 +201,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                 if (result.output.isNotBlank()) lines += result.output
                 lines += if (result.timedOut) "[TIMEOUT]" else "[exit ${result.exitCode}]"
             } catch (e: Exception) {
-                lines += (e.message ?: "Erro ao executar comando")
+                lines += (e.message ?: "Erro")
             }
             _uiState.update { state ->
                 state.copy(
@@ -216,7 +236,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                     _uiState.update {
                         it.copy(
                             isCommitting = false,
-                            lastCommitStatus = "Commit OK: ${commit.commitSha.take(7)} · ${commit.path}",
+                            lastCommitStatus = "Commit OK: ${commit.commitSha.take(7)}",
                             repoFiles = it.repoFiles.map { f ->
                                 if (f.path == path) f.copy(isModified = false, content = content) else f
                             }
@@ -225,7 +245,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                 },
                 onFailure = { err ->
                     _uiState.update {
-                        it.copy(isCommitting = false, lastCommitStatus = err.message ?: "Falha no commit.")
+                        it.copy(isCommitting = false, lastCommitStatus = err.message ?: "Falha")
                     }
                 }
             )
@@ -236,13 +256,14 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
         val prompt = _uiState.value.currentPrompt.trim()
         if (prompt.isBlank() || _uiState.value.isThinking) return
 
-        if (!GeminiClient.isApiKeyConfigured()) {
+        if (!LlmGateway.isConfigured()) {
             _uiState.update {
                 it.copy(
                     messages = it.messages + ChatMessage(
                         id = UUID.randomUUID().toString(),
                         role = MessageRole.SYSTEM,
-                        text = "Configure a API key do Gemini em Configurações (ícone de engrenagem) antes de enviar prompts."
+                        text = "Configure a API key em Configurações (engrenagem). " +
+                            "Provedor atual: ${_uiState.value.llmProvider.label}."
                     )
                 )
             }
@@ -377,7 +398,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                         pendingMutation = null,
                         messages = s.messages.map {
                             if (it.id == agentMessageId) it.copy(
-                                text = "Interrompido: ${e.message ?: "erro"}. Nenhuma alteração não confirmada.",
+                                text = "Interrompido: ${e.message ?: "erro"}",
                                 isThinking = false
                             ) else it
                         }
