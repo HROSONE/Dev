@@ -24,15 +24,16 @@ data class AppUpdateInfo(
 )
 
 /**
- * Consulta a última release pública de HROSONE/Dev e compara com versionCode local.
- * O APK deve ser asset da release com nome terminando em .apk (preferência: app-debug.apk / DevAgent.apk).
+ * Auto-update via GitHub Releases (HROSONE/Dev).
+ * Tags no formato v1.1.<run_number>; o body da release deve conter
+ * "versionCode=<n>" (o workflow Build APK já grava isso).
  */
 class AppUpdateChecker(
     private val owner: String = "HROSONE",
     private val repo: String = "Dev",
     private val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
         .build()
 ) {
 
@@ -42,6 +43,7 @@ class AppUpdateChecker(
                 .url("https://api.github.com/repos/$owner/$repo/releases/latest")
                 .header("Accept", "application/vnd.github+json")
                 .header("X-GitHub-Api-Version", "2022-11-28")
+                .header("User-Agent", "DevAgent/${BuildConfig.VERSION_NAME}")
                 .get()
                 .build()
 
@@ -53,7 +55,7 @@ class AppUpdateChecker(
                 val body = response.body?.string().orEmpty()
                 val json = JSONObject(body)
                 val tag = json.optString("tag_name").removePrefix("v")
-                val notes = json.optString("body").take(2_000)
+                val notes = json.optString("body").orEmpty()
                 val htmlUrl = json.optString("html_url")
                 val assets = json.optJSONArray("assets") ?: return@runCatching null
 
@@ -63,36 +65,56 @@ class AppUpdateChecker(
                     val name = asset.optString("name").lowercase()
                     if (name.endsWith(".apk")) {
                         apkUrl = asset.optString("browser_download_url")
-                        if (name.contains("debug") || name.contains("devagent")) break
+                        if (name.contains("devagent") || name.contains("debug")) break
                     }
                 }
                 if (apkUrl.isBlank()) return@runCatching null
 
-                val remoteCode = parseVersionCode(tag, json.optString("name"))
+                val remoteCode = parseVersionCode(tag, notes)
                 if (remoteCode <= BuildConfig.VERSION_CODE) return@runCatching null
 
                 AppUpdateInfo(
                     tagName = tag,
-                    versionName = tag,
+                    versionName = tag.ifBlank { "$remoteCode" },
                     versionCode = remoteCode,
                     apkUrl = apkUrl,
-                    releaseNotes = notes,
+                    releaseNotes = notes.take(2_000),
                     htmlUrl = htmlUrl
                 )
             }
         }
     }
 
-    suspend fun downloadApk(context: Context, url: String): Result<File> = withContext(Dispatchers.IO) {
+    suspend fun downloadApk(
+        context: Context,
+        url: String,
+        onProgress: ((downloaded: Long, total: Long) -> Unit)? = null
+    ): Result<File> = withContext(Dispatchers.IO) {
         runCatching {
-            val request = Request.Builder().url(url).get().build()
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", "DevAgent/${BuildConfig.VERSION_NAME}")
+                .get()
+                .build()
             http.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) throw Exception("Download HTTP ${response.code}")
+                val body = response.body ?: throw Exception("Corpo vazio")
+                val total = body.contentLength()
                 val dir = File(context.cacheDir, "updates").apply { mkdirs() }
                 val out = File(dir, "devagent-update.apk")
-                response.body?.byteStream()?.use { input ->
-                    out.outputStream().use { output -> input.copyTo(output) }
-                } ?: throw Exception("Corpo vazio no download")
+                body.byteStream().use { input ->
+                    out.outputStream().use { output ->
+                        val buffer = ByteArray(8 * 1024)
+                        var downloaded = 0L
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read == -1) break
+                            output.write(buffer, 0, read)
+                            downloaded += read
+                            onProgress?.invoke(downloaded, total)
+                        }
+                    }
+                }
                 out
             }
         }
@@ -124,19 +146,24 @@ class AppUpdateChecker(
         ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
 
-    private fun parseVersionCode(tag: String, releaseName: String): Int {
-        // Aceita tags: 1.2.3, v1.2.3, 12, build-12
-        val fromName = Regex("versionCode[=:]\\s*(\\d+)", RegexOption.IGNORE_CASE)
-            .find(releaseName)?.groupValues?.getOrNull(1)?.toIntOrNull()
-        if (fromName != null) return fromName
+    /**
+     * Preferência:
+     * 1) "versionCode=123" no body da release (CI)
+     * 2) último segmento numérico do tag (ex.: 1.1.42 → 42)
+     * 3) fallback legível 1.2.3 → 10203
+     */
+    private fun parseVersionCode(tag: String, releaseBody: String): Int {
+        Regex("versionCode\\s*[=:]\\s*(\\d+)", RegexOption.IGNORE_CASE)
+            .find(releaseBody)?.groupValues?.getOrNull(1)?.toIntOrNull()
+            ?.let { return it }
 
-        val digits = tag.filter { it.isDigit() || it == '.' }
-        val parts = digits.split('.').mapNotNull { it.toIntOrNull() }
-        return when {
-            parts.isEmpty() -> 0
-            parts.size == 1 -> parts[0]
-            parts.size == 2 -> parts[0] * 100 + parts[1]
-            else -> parts[0] * 10_000 + parts[1] * 100 + parts[2]
-        }
+        val parts = tag.filter { it.isDigit() || it == '.' }
+            .split('.')
+            .mapNotNull { it.toIntOrNull() }
+        if (parts.isEmpty()) return 0
+        // v1.1.N → N (run_number do Actions)
+        if (parts.size >= 3) return parts.last()
+        if (parts.size == 1) return parts[0]
+        return parts[0] * 100 + parts[1]
     }
 }
