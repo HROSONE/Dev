@@ -233,28 +233,41 @@ class DevAgentViewModel : ViewModel() {
                                         )
                                     } else msg
                                 }
-                                // If patch was applied, mark files as modified
-                                val updatedFiles = state.repoFiles.map { file ->
-                                    if (file.path.contains("rate_limit") || file.path.contains("auth.py")) {
-                                        file.copy(isModified = true)
-                                    } else file
-                                }
-
                                 state.copy(
                                     messages = updatedMessages,
-                                    isThinking = false,
-                                    repoFiles = updatedFiles
+                                    isThinking = false
                                 )
                             }
                         }
 
                         is AgentExecutionEvent.Error -> {
-                            _uiState.update { it.copy(isThinking = false) }
+                            _uiState.update { state ->
+                                state.copy(
+                                    isThinking = false,
+                                    messages = state.messages.map { msg ->
+                                        if (msg.id == agentMessageId) {
+                                            msg.copy(text = event.message, isThinking = false)
+                                        } else msg
+                                    }
+                                )
+                            }
                         }
                     }
                 }
             } catch (e: Exception) {
-                _uiState.update { it.copy(isThinking = false) }
+                _uiState.update { state ->
+                    state.copy(
+                        isThinking = false,
+                        messages = state.messages.map { msg ->
+                            if (msg.id == agentMessageId) {
+                                msg.copy(
+                                    text = "A execução foi interrompida: ${e.message ?: "erro inesperado"}. Nenhuma alteração foi confirmada.",
+                                    isThinking = false
+                                )
+                            } else msg
+                        }
+                    )
+                }
             }
         }
     }
