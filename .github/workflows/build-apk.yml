@@ -5,11 +5,13 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -21,16 +23,18 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Setup Gradle
+      - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        with:
+          gradle-version: "9.3.1"
 
       - name: Create .env
         run: |
           if [ ! -f .env ]; then
-            cp .env.example .env 2>/dev/null || echo "GEMINI_API_KEY=MY_GEMINI_API_KEY" > .env
+            cp .env.example .env 2>/dev/null || true
+            if [ ! -f .env ]; then
+              printf 'GEMINI_API_KEY=MY_GEMINI_API_KEY\n' > .env
+            fi
           fi
 
       - name: Debug keystore
@@ -45,18 +49,11 @@ jobs:
               -dname "CN=Android Debug,O=Android,C=US"
           fi
 
-      - name: Ensure Gradle Wrapper
-        run: |
-          if [ ! -f gradlew ]; then
-            gradle wrapper --gradle-version 8.11.1
-            chmod +x gradlew
-          fi
-
-      - name: Build debug APK
+      - name: Assemble debug APK
         run: |
           CODE=${{ github.run_number }}
           NAME="1.1.${CODE}"
-          ./gradlew assembleDebug \
+          gradle assembleDebug \
             -PversionCode=$CODE \
             -PversionName=$NAME \
             --stacktrace
@@ -68,27 +65,18 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
-      - name: Version meta
-        id: ver
-        run: |
-          CODE=${{ github.run_number }}
-          NAME="1.1.${CODE}"
-          echo "code=$CODE" >> $GITHUB_OUTPUT
-          echo "name=$NAME" >> $GITHUB_OUTPUT
-          echo "tag=v${NAME}" >> $GITHUB_OUTPUT
-
-      - name: Publish GitHub Release with APK
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.ver.outputs.tag }}
-          name: DevAgent ${{ steps.ver.outputs.name }}
+          tag_name: v1.1.${{ github.run_number }}
+          name: DevAgent 1.1.${{ github.run_number }}
           body: |
-            Build automático · commit `${{ github.sha }}`
+            Build automático · `${{ github.sha }}`
 
-            - versionCode=${{ steps.ver.outputs.code }}
-            - versionName=${{ steps.ver.outputs.name }}
+            - versionCode=${{ github.run_number }}
+            - versionName=1.1.${{ github.run_number }}
 
-            Baixe o APK abaixo. No celular, permita instalar apps desta fonte se pedido.
+            Baixe o APK e instale (permita fontes desconhecidas para este app).
           files: app/build/outputs/apk/debug/*.apk
           generate_release_notes: true
         env:
