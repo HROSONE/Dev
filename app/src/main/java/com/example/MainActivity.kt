@@ -22,6 +22,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.data.model.LlmProvider
 import com.example.ui.components.AgentModeSelector
 import com.example.ui.components.DiffView
 import com.example.ui.screens.AgentChatScreen
@@ -53,8 +54,13 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
     var showSettingsDialog by remember { mutableStateOf(false) }
     var repoInputText by remember { mutableStateOf(uiState.activeRepo) }
     var githubTokenText by remember { mutableStateOf("") }
-    var apiKeyInput by remember { mutableStateOf("") }
-    var showApiKeyPlain by remember { mutableStateOf(false) }
+
+    // Settings form state
+    var settingsProvider by remember { mutableStateOf(LlmProvider.GEMINI) }
+    var geminiKeyInput by remember { mutableStateOf("") }
+    var openRouterKeyInput by remember { mutableStateOf("") }
+    var selectedOrModel by remember { mutableStateOf(LlmProvider.DEFAULT_OPENROUTER_MODEL) }
+    var showKeysPlain by remember { mutableStateOf(false) }
 
     LaunchedEffect(uiState.repositoryStatus) {
         if (uiState.repositoryStatus.startsWith("Conectado")) {
@@ -63,79 +69,142 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
         }
     }
 
-    // Diálogo Configurações — colar API key
     if (showSettingsDialog) {
         LaunchedEffect(Unit) {
-            apiKeyInput = viewModel.getStoredApiKey()
+            settingsProvider = uiState.llmProvider
+            geminiKeyInput = viewModel.getStoredGeminiKey()
+            openRouterKeyInput = viewModel.getStoredOpenRouterKey()
+            selectedOrModel = uiState.openRouterModelId
         }
         AlertDialog(
             onDismissRequest = { showSettingsDialog = false },
-            title = {
-                Text("Configurações", fontSize = 16.sp, color = TextPrimary)
-            },
+            title = { Text("Configurações LLM", fontSize = 16.sp, color = TextPrimary) },
             text = {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        text = "Gemini API key",
-                        fontSize = 13.sp,
-                        color = TextPrimary
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Cole a chave de https://aistudio.google.com/apikey. Fica salva só neste aparelho.",
-                        fontSize = 11.sp,
-                        color = TextSecondary
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
-                    OutlinedTextField(
-                        value = apiKeyInput,
-                        onValueChange = { apiKeyInput = it },
-                        label = { Text("API key") },
-                        placeholder = { Text("AIza…") },
-                        singleLine = true,
-                        visualTransformation = if (showApiKeyPlain) {
-                            VisualTransformation.None
-                        } else {
-                            PasswordVisualTransformation()
-                        },
-                        trailingIcon = {
-                            IconButton(onClick = { showApiKeyPlain = !showApiKeyPlain }) {
-                                Icon(
-                                    imageVector = if (showApiKeyPlain) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                    contentDescription = if (showApiKeyPlain) "Ocultar" else "Mostrar",
-                                    tint = TextSecondary
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    Text("Provedor", fontSize = 12.sp, color = TextSecondary)
+                    Spacer(Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        LlmProvider.entries.forEach { p ->
+                            FilterChip(
+                                selected = settingsProvider == p,
+                                onClick = { settingsProvider = p },
+                                label = { Text(p.label, fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = AccentCyan.copy(alpha = 0.25f),
+                                    selectedLabelColor = AccentCyan
                                 )
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("settings_gemini_api_key"),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = TextPrimary,
-                            unfocusedTextColor = TextPrimary,
-                            focusedBorderColor = AccentCyan,
-                            unfocusedBorderColor = DarkBorder
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.height(14.dp))
+
+                    if (settingsProvider == LlmProvider.GEMINI) {
+                        Text("Gemini API key", fontSize = 12.sp, color = TextPrimary)
+                        Spacer(Modifier.height(4.dp))
+                        OutlinedTextField(
+                            value = geminiKeyInput,
+                            onValueChange = { geminiKeyInput = it },
+                            label = { Text("AIza…") },
+                            singleLine = true,
+                            visualTransformation = if (showKeysPlain) VisualTransformation.None else PasswordVisualTransformation(),
+                            modifier = Modifier.fillMaxWidth().testTag("settings_gemini_api_key"),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = TextPrimary,
+                                unfocusedTextColor = TextPrimary,
+                                focusedBorderColor = AccentCyan,
+                                unfocusedBorderColor = DarkBorder
+                            )
                         )
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
+                    } else {
+                        Text("OpenRouter API key", fontSize = 12.sp, color = TextPrimary)
+                        Spacer(Modifier.height(4.dp))
+                        Text("https://openrouter.ai/keys", fontSize = 10.sp, color = TextMuted)
+                        Spacer(Modifier.height(4.dp))
+                        OutlinedTextField(
+                            value = openRouterKeyInput,
+                            onValueChange = { openRouterKeyInput = it },
+                            label = { Text("sk-or-…") },
+                            singleLine = true,
+                            visualTransformation = if (showKeysPlain) VisualTransformation.None else PasswordVisualTransformation(),
+                            modifier = Modifier.fillMaxWidth().testTag("settings_openrouter_api_key"),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = TextPrimary,
+                                unfocusedTextColor = TextPrimary,
+                                focusedBorderColor = AccentCyan,
+                                unfocusedBorderColor = DarkBorder
+                            )
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Text("Modelo", fontSize = 12.sp, color = TextPrimary)
+                        Spacer(Modifier.height(6.dp))
+                        LlmProvider.openRouterPresets.forEach { preset ->
+                            FilterChip(
+                                selected = selectedOrModel == preset.id,
+                                onClick = { selectedOrModel = preset.id },
+                                label = {
+                                    Text(
+                                        if (preset.free) "${preset.label} · free" else preset.label,
+                                        fontSize = 11.sp
+                                    )
+                                },
+                                modifier = Modifier.padding(bottom = 4.dp),
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = AccentGreen.copy(alpha = 0.2f),
+                                    selectedLabelColor = AccentGreen
+                                )
+                            )
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        OutlinedTextField(
+                            value = selectedOrModel,
+                            onValueChange = { selectedOrModel = it },
+                            label = { Text("ID custom (opcional)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = TextPrimary,
+                                unfocusedTextColor = TextPrimary,
+                                focusedBorderColor = AccentCyan,
+                                unfocusedBorderColor = DarkBorder
+                            )
+                        )
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = showKeysPlain,
+                            onCheckedChange = { showKeysPlain = it }
+                        )
+                        Text("Mostrar chaves", fontSize = 12.sp, color = TextSecondary)
+                    }
+
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
-                            modifier = Modifier
+                            Modifier
                                 .size(8.dp)
                                 .background(
-                                    if (uiState.hasGeminiKey) AccentGreen else AccentYellow,
-                                    shape = MaterialTheme.shapes.small
+                                    if (uiState.hasLlmKey) AccentGreen else AccentYellow,
+                                    MaterialTheme.shapes.small
                                 )
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(Modifier.width(6.dp))
                         Text(
-                            text = if (uiState.hasGeminiKey) "Chave configurada" else "Nenhuma chave",
-                            fontSize = 12.sp,
-                            color = if (uiState.hasGeminiKey) AccentGreen else AccentYellow
+                            uiState.llmStatusLabel.ifBlank {
+                                if (uiState.hasLlmKey) "Configurado" else "Sem chave"
+                            },
+                            fontSize = 11.sp,
+                            color = if (uiState.hasLlmKey) AccentGreen else AccentYellow
                         )
                     }
                     if (uiState.apiKeyStatus.isNotBlank()) {
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(Modifier.height(4.dp))
                         Text(uiState.apiKeyStatus, fontSize = 11.sp, color = AccentCyan)
                     }
                 }
@@ -143,25 +212,20 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
             confirmButton = {
                 TextButton(
                     onClick = {
-                        viewModel.saveGeminiApiKey(apiKeyInput)
+                        viewModel.saveLlmSettings(
+                            provider = settingsProvider,
+                            geminiKey = geminiKeyInput,
+                            openRouterKey = openRouterKeyInput,
+                            openRouterModelId = selectedOrModel
+                        )
                         showSettingsDialog = false
                     },
                     modifier = Modifier.testTag("settings_save_api_key")
-                ) {
-                    Text("Salvar", color = AccentGreen)
-                }
+                ) { Text("Salvar", color = AccentGreen) }
             },
             dismissButton = {
-                Row {
-                    TextButton(onClick = {
-                        apiKeyInput = ""
-                        viewModel.saveGeminiApiKey("")
-                    }) {
-                        Text("Limpar", color = AccentRed)
-                    }
-                    TextButton(onClick = { showSettingsDialog = false }) {
-                        Text("Fechar", color = TextSecondary)
-                    }
+                TextButton(onClick = { showSettingsDialog = false }) {
+                    Text("Fechar", color = TextSecondary)
                 }
             },
             containerColor = DarkSurfaceVariant
@@ -173,67 +237,26 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
             onDismissRequest = { viewModel.respondToMutation(false) },
             title = { Text("Confirmar gravação", fontSize = 16.sp, color = TextPrimary) },
             text = {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Text("Arquivo:", fontSize = 12.sp, color = TextSecondary)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = mutation.path,
-                        fontSize = 13.sp,
-                        color = AccentCyan,
-                        fontFamily = FontFamily.Monospace
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
+                Column(Modifier.fillMaxWidth()) {
+                    Text(mutation.path, fontSize = 13.sp, color = AccentCyan, fontFamily = FontFamily.Monospace)
+                    Spacer(Modifier.height(8.dp))
                     if (mutation.diffLines.isNotEmpty()) {
-                        Text("Diff:", fontSize = 12.sp, color = TextSecondary)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(max = 180.dp)
-                                .verticalScroll(rememberScrollState())
-                        ) {
+                        Box(Modifier.fillMaxWidth().heightIn(max = 180.dp).verticalScroll(rememberScrollState())) {
                             DiffView(lines = mutation.diffLines)
                         }
-                    } else {
-                        Text("Prévia:", fontSize = 12.sp, color = TextSecondary)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Surface(
-                            color = DarkSurface,
-                            shape = MaterialTheme.shapes.small,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(max = 180.dp)
-                        ) {
-                            Text(
-                                text = mutation.contentPreview.ifBlank { "(vazio)" },
-                                fontSize = 11.sp,
-                                fontFamily = FontFamily.Monospace,
-                                color = TextPrimary,
-                                modifier = Modifier
-                                    .padding(8.dp)
-                                    .verticalScroll(rememberScrollState())
-                            )
-                        }
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Grava só no workspace local. Use a aba Commit para enviar ao GitHub.",
-                        fontSize = 11.sp,
-                        color = AccentYellow
-                    )
+                    Text("Só no workspace local.", fontSize = 11.sp, color = AccentYellow)
                 }
             },
             confirmButton = {
-                TextButton(
-                    onClick = { viewModel.respondToMutation(true) },
-                    modifier = Modifier.testTag("confirm_mutation_approve")
-                ) { Text("Aprovar e gravar", color = AccentGreen) }
+                TextButton(onClick = { viewModel.respondToMutation(true) }) {
+                    Text("Aprovar", color = AccentGreen)
+                }
             },
             dismissButton = {
-                TextButton(
-                    onClick = { viewModel.respondToMutation(false) },
-                    modifier = Modifier.testTag("confirm_mutation_reject")
-                ) { Text("Recusar", color = AccentRed) }
+                TextButton(onClick = { viewModel.respondToMutation(false) }) {
+                    Text("Recusar", color = AccentRed)
+                }
             },
             containerColor = DarkSurfaceVariant
         )
@@ -242,19 +265,13 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
     if (showRepoDialog) {
         AlertDialog(
             onDismissRequest = { showRepoDialog = false },
-            title = { Text("Conectar Repositório GitHub", fontSize = 16.sp, color = TextPrimary) },
+            title = { Text("Conectar GitHub", fontSize = 16.sp, color = TextPrimary) },
             text = {
                 Column {
-                    Text(
-                        text = "owner/repo — token opcional (leitura ou contents:write para commit)",
-                        fontSize = 12.sp,
-                        color = TextSecondary
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
                     OutlinedTextField(
                         value = repoInputText,
                         onValueChange = { repoInputText = it },
-                        label = { Text("proprietário/repositório") },
+                        label = { Text("owner/repo") },
                         singleLine = true,
                         enabled = !uiState.isConnectingRepo,
                         colors = OutlinedTextFieldDefaults.colors(
@@ -264,15 +281,14 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                             unfocusedBorderColor = DarkBorder
                         )
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = githubTokenText,
                         onValueChange = { githubTokenText = it },
-                        label = { Text("Token GitHub (opcional)") },
-                        placeholder = { Text("ghp_… / github_pat_…") },
+                        label = { Text("Token (opcional)") },
                         singleLine = true,
-                        enabled = !uiState.isConnectingRepo,
                         visualTransformation = PasswordVisualTransformation(),
+                        enabled = !uiState.isConnectingRepo,
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = TextPrimary,
                             unfocusedTextColor = TextPrimary,
@@ -280,18 +296,9 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                             unfocusedBorderColor = DarkBorder
                         )
                     )
-                    Text(
-                        text = "Token fica só na memória desta sessão. contents:write habilita commit.",
-                        fontSize = 11.sp,
-                        color = TextSecondary
-                    )
                     if (uiState.repositoryStatus.isNotBlank()) {
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = uiState.repositoryStatus,
-                            fontSize = 11.sp,
-                            color = if (uiState.repositoryStatus.startsWith("Conectado")) AccentGreen else TextSecondary
-                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(uiState.repositoryStatus, fontSize = 11.sp, color = TextSecondary)
                     }
                 }
             },
@@ -299,13 +306,11 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                 TextButton(
                     enabled = !uiState.isConnectingRepo && repoInputText.isNotBlank(),
                     onClick = {
-                        val tokenForRequest = githubTokenText
+                        val t = githubTokenText
                         githubTokenText = ""
-                        viewModel.connectRepository(repoInputText, tokenForRequest)
+                        viewModel.connectRepository(repoInputText, t)
                     }
-                ) {
-                    Text(if (uiState.isConnectingRepo) "Conectando…" else "Conectar", color = AccentCyan)
-                }
+                ) { Text(if (uiState.isConnectingRepo) "…" else "Conectar", color = AccentCyan) }
             },
             dismissButton = {
                 TextButton(onClick = { showRepoDialog = false }) {
@@ -317,36 +322,29 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
     }
 
     Scaffold(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(DarkBackground),
+        modifier = Modifier.fillMaxSize().background(DarkBackground),
         topBar = {
             Column {
-                // Barra com ícone de configurações
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(DarkSurface)
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.End,
+                    Modifier.fillMaxWidth().background(DarkSurface).padding(horizontal = 8.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (!uiState.hasGeminiKey) {
-                        Text(
-                            text = "API key",
-                            fontSize = 11.sp,
-                            color = AccentYellow,
-                            modifier = Modifier.padding(end = 4.dp)
-                        )
-                    }
+                    Text(
+                        text = uiState.llmStatusLabel.ifBlank { "LLM" },
+                        fontSize = 10.sp,
+                        color = if (uiState.hasLlmKey) AccentGreen else AccentYellow,
+                        modifier = Modifier.weight(1f).padding(start = 4.dp),
+                        maxLines = 1
+                    )
                     IconButton(
                         onClick = { showSettingsDialog = true },
                         modifier = Modifier.testTag("open_settings_button")
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "Configurações",
-                            tint = if (uiState.hasGeminiKey) AccentCyan else AccentYellow
+                            Icons.Default.Settings,
+                            "Configurações",
+                            tint = if (uiState.hasLlmKey) AccentCyan else AccentYellow
                         )
                     }
                 }
@@ -364,15 +362,11 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
             }
         },
         bottomBar = {
-            NavigationBar(
-                containerColor = DarkSurface,
-                contentColor = AccentCyan,
-                tonalElevation = 8.dp
-            ) {
+            NavigationBar(containerColor = DarkSurface, contentColor = AccentCyan, tonalElevation = 8.dp) {
                 NavigationBarItem(
                     selected = uiState.activeTab == 0,
                     onClick = { viewModel.setTab(0) },
-                    icon = { Icon(Icons.Default.SmartToy, contentDescription = "Agente") },
+                    icon = { Icon(Icons.Default.SmartToy, "Agente") },
                     label = { Text("Agente", fontSize = 11.sp) },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = AccentCyan,
@@ -380,13 +374,12 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                         unselectedIconColor = TextSecondary,
                         unselectedTextColor = TextSecondary,
                         indicatorColor = AccentCyan.copy(alpha = 0.15f)
-                    ),
-                    modifier = Modifier.testTag("nav_agent_chat")
+                    )
                 )
                 NavigationBarItem(
                     selected = uiState.activeTab == 1,
                     onClick = { viewModel.setTab(1) },
-                    icon = { Icon(Icons.Default.Terminal, contentDescription = "Sandbox") },
+                    icon = { Icon(Icons.Default.Terminal, "Sandbox") },
                     label = { Text("Sandbox", fontSize = 11.sp) },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = AccentCyan,
@@ -394,13 +387,12 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                         unselectedIconColor = TextSecondary,
                         unselectedTextColor = TextSecondary,
                         indicatorColor = AccentCyan.copy(alpha = 0.15f)
-                    ),
-                    modifier = Modifier.testTag("nav_sandbox_workspace")
+                    )
                 )
                 NavigationBarItem(
                     selected = uiState.activeTab == 2,
                     onClick = { viewModel.setTab(2) },
-                    icon = { Icon(Icons.Default.Code, contentDescription = "Arquitetura") },
+                    icon = { Icon(Icons.Default.Code, "Arquitetura") },
                     label = { Text("Arquitetura", fontSize = 11.sp) },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = AccentCyan,
@@ -408,18 +400,12 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                         unselectedIconColor = TextSecondary,
                         unselectedTextColor = TextSecondary,
                         indicatorColor = AccentCyan.copy(alpha = 0.15f)
-                    ),
-                    modifier = Modifier.testTag("nav_architecture_guide")
+                    )
                 )
             }
         }
     ) { innerPadding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .background(DarkBackground)
-        ) {
+        Box(Modifier.fillMaxSize().padding(innerPadding).background(DarkBackground)) {
             when (uiState.activeTab) {
                 0 -> AgentChatScreen(
                     messages = uiState.messages,
@@ -432,8 +418,8 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                     onSubmitPrompt = { viewModel.submitPrompt() },
                     onStopExecution = { viewModel.stopExecution() },
                     onToggleToolExpand = { msgId, toolId -> viewModel.toggleToolExpand(msgId, toolId) },
-                    onQuickPromptSelected = { prompt ->
-                        viewModel.setPrompt(prompt)
+                    onQuickPromptSelected = { p ->
+                        viewModel.setPrompt(p)
                         viewModel.submitPrompt()
                     }
                 )
