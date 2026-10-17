@@ -35,25 +35,22 @@ fun SandboxWorkspaceScreen(
     files: List<RepoFile>,
     selectedFile: RepoFile?,
     onSelectFile: (RepoFile) -> Unit,
+    terminalLogs: List<String> = emptyList(),
+    onRunCommand: (String) -> Unit = {},
+    hasWriteToken: Boolean = false,
+    isCommitting: Boolean = false,
+    lastCommitStatus: String = "",
+    onCommitFile: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    var selectedTab by remember { mutableIntStateOf(0) } // 0: Files, 1: Sandbox Terminal, 2: Docker Stats
+    var selectedTab by remember { mutableIntStateOf(0) }
     var terminalInput by remember { mutableStateOf("") }
-    var terminalLogs by remember {
-        mutableStateOf(
-            listOf(
-                "Terminal ainda não conectado a um ambiente de execução real.",
-                "Nenhum comando foi executado nesta sessão."
-            )
-        )
-    }
 
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(DarkBackground)
     ) {
-        // Workspace Header
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -72,20 +69,19 @@ fun SandboxWorkspaceScreen(
                 Spacer(modifier = Modifier.width(8.dp))
                 Column {
                     Text(
-                        text = "Repositório & Terminal (prévia)",
+                        text = "Workspace local",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         color = TextPrimary
                     )
                     Text(
-                        text = activeRepo,
+                        text = activeRepo.ifBlank { "Nenhum repo conectado" },
                         fontSize = 11.sp,
-                        color = AccentGreen
+                        color = if (activeRepo.isBlank()) TextMuted else AccentGreen
                     )
                 }
             }
 
-            // Docker badge
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
@@ -97,18 +93,17 @@ fun SandboxWorkspaceScreen(
                     modifier = Modifier
                         .size(6.dp)
                         .clip(CircleShape)
-                        .background(AccentYellow)
+                        .background(AccentGreen)
                 )
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(
-                    text = "Sandbox não conectada",
+                    text = "pwd · ls · cat",
                     fontSize = 10.sp,
                     color = TextPrimary
                 )
             }
         }
 
-        // Sub Tabs
         TabRow(
             selectedTabIndex = selectedTab,
             containerColor = DarkSurface,
@@ -123,20 +118,18 @@ fun SandboxWorkspaceScreen(
             Tab(
                 selected = selectedTab == 1,
                 onClick = { selectedTab = 1 },
-                text = { Text("Terminal Interativo", fontSize = 12.sp) }
+                text = { Text("Terminal", fontSize = 12.sp) }
             )
             Tab(
                 selected = selectedTab == 2,
                 onClick = { selectedTab = 2 },
-                text = { Text("Isolamento & Recursos", fontSize = 12.sp) }
+                text = { Text("Commit", fontSize = 12.sp) }
             )
         }
 
         when (selectedTab) {
             0 -> {
-                // File Explorer & Inspector
                 Row(modifier = Modifier.fillMaxSize()) {
-                    // File List (Left column)
                     LazyColumn(
                         modifier = Modifier
                             .weight(0.42f)
@@ -181,7 +174,6 @@ fun SandboxWorkspaceScreen(
                         }
                     }
 
-                    // File Viewer (Right column)
                     Box(
                         modifier = Modifier
                             .weight(0.58f)
@@ -206,7 +198,7 @@ fun SandboxWorkspaceScreen(
                                     )
                                     if (selectedFile.isModified) {
                                         Text(
-                                            text = "MODIFICADO PELO AGENTE",
+                                            text = "MODIFICADO",
                                             fontSize = 9.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = AccentYellow
@@ -220,7 +212,7 @@ fun SandboxWorkspaceScreen(
                             }
                         } else {
                             Text(
-                                text = "Selecione um arquivo ao lado para inspecionar",
+                                text = "Selecione um arquivo",
                                 fontSize = 12.sp,
                                 color = TextMuted,
                                 modifier = Modifier.align(Alignment.Center)
@@ -231,7 +223,6 @@ fun SandboxWorkspaceScreen(
             }
 
             1 -> {
-                // Interactive Sandbox Terminal
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -252,7 +243,11 @@ fun SandboxWorkspaceScreen(
                                 text = log,
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 11.sp,
-                                color = if (log.startsWith("root@sandbox")) AccentCyan else TextPrimary,
+                                color = when {
+                                    log.startsWith(">") -> AccentCyan
+                                    log.startsWith("[") -> TextMuted
+                                    else -> TextPrimary
+                                },
                                 lineHeight = 15.sp
                             )
                         }
@@ -267,7 +262,9 @@ fun SandboxWorkspaceScreen(
                         OutlinedTextField(
                             value = terminalInput,
                             onValueChange = { terminalInput = it },
-                            placeholder = { Text("Ex: pytest, git diff, poetry show...", fontSize = 11.sp, color = TextMuted) },
+                            placeholder = {
+                                Text("pwd | ls | cat arquivo", fontSize = 11.sp, color = TextMuted)
+                            },
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("terminal_input_field"),
@@ -276,9 +273,7 @@ fun SandboxWorkspaceScreen(
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                             keyboardActions = KeyboardActions(onSend = {
                                 if (terminalInput.isNotBlank()) {
-                                    val cmd = terminalInput.trim()
-                                    val output = "Terminal real ainda não conectado. Nenhum comando foi executado."
-                                    terminalLogs = terminalLogs + listOf("> $cmd", output)
+                                    onRunCommand(terminalInput.trim())
                                     terminalInput = ""
                                 }
                             }),
@@ -297,9 +292,7 @@ fun SandboxWorkspaceScreen(
                         Button(
                             onClick = {
                                 if (terminalInput.isNotBlank()) {
-                                    val cmd = terminalInput.trim()
-                                    val output = "Terminal real ainda não conectado. Nenhum comando foi executado."
-                                    terminalLogs = terminalLogs + listOf("> $cmd", output)
+                                    onRunCommand(terminalInput.trim())
                                     terminalInput = ""
                                 }
                             },
@@ -314,7 +307,6 @@ fun SandboxWorkspaceScreen(
             }
 
             2 -> {
-                // Docker & Isolation Stats
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -322,52 +314,71 @@ fun SandboxWorkspaceScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Text(
-                        text = "Status do Ambiente de Execução",
+                        text = "Commit no GitHub",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
                         color = TextPrimary
                     )
+                    Text(
+                        text = if (hasWriteToken) {
+                            "Token de sessão presente. Você pode enviar arquivos modificados do workspace."
+                        } else {
+                            "Conecte o repositório com um token (contents:write) para habilitar commit."
+                        },
+                        fontSize = 12.sp,
+                        color = TextSecondary
+                    )
 
-                    StatCard(
-                        title = "Mecanismo de Isolamento",
-                        value = "Não conectado",
-                        description = "O app ainda não iniciou um contêiner nem verificou um mecanismo de isolamento."
-                    )
-                    StatCard(
-                        title = "Limites de Recursos (cgroups v2)",
-                        value = "Limites não aplicados",
-                        description = "Os limites abaixo são metas de projeto, não configurações ativas."
-                    )
-                    StatCard(
-                        title = "Política de Rede (Network Sandbox)",
-                        value = "Rede não configurada",
-                        description = "Nenhuma política de rede foi aplicada ou testada."
-                    )
-                    StatCard(
-                        title = "Tempo Limite de Execução (Timeout)",
-                        value = "Timeout não aplicado",
-                        description = "Nenhum processo é iniciado pelo terminal nesta versão."
-                    )
+                    val modified = files.filter { it.isModified }
+                    if (modified.isEmpty()) {
+                        Text(
+                            text = "Nenhum arquivo modificado no workspace.",
+                            fontSize = 12.sp,
+                            color = TextMuted
+                        )
+                    } else {
+                        modified.forEach { file ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(DarkSurfaceVariant)
+                                    .padding(10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = file.path,
+                                    fontSize = 11.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = TextPrimary,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Button(
+                                    onClick = { onCommitFile(file.path) },
+                                    enabled = hasWriteToken && !isCommitting,
+                                    colors = ButtonDefaults.buttonColors(containerColor = AccentGreen),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        if (isCommitting) "…" else "Commit",
+                                        fontSize = 11.sp,
+                                        color = DarkBackground
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (lastCommitStatus.isNotBlank()) {
+                        Text(
+                            text = lastCommitStatus,
+                            fontSize = 11.sp,
+                            color = if (lastCommitStatus.startsWith("Commit OK")) AccentGreen else AccentYellow
+                        )
+                    }
                 }
             }
         }
     }
 }
-
-@Composable
-fun StatCard(title: String, value: String, description: String) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = DarkSurfaceVariant),
-        border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(DarkBorder))
-    ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Text(text = title, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = AccentCyan)
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(text = value, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(text = description, fontSize = 10.sp, color = TextSecondary)
-        }
-    }
-}
-
