@@ -298,8 +298,8 @@ fun SandboxWorkspaceScreen(
                             onClick = {
                                 if (terminalInput.isNotBlank()) {
                                     val cmd = terminalInput.trim()
-                                    val output = executeSimulatedSandboxCommand(cmd)
-                                    terminalLogs = terminalLogs + listOf("root@sandbox:/workspace# $cmd", output)
+                                    val output = "Terminal real ainda não conectado. Nenhum comando foi executado."
+                                    terminalLogs = terminalLogs + listOf("> $cmd", output)
                                     terminalInput = ""
                                 }
                             },
