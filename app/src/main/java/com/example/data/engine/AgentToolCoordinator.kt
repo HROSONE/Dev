@@ -12,7 +12,11 @@ import com.example.data.model.AgentMode
 sealed class AgentToolExecution {
     data class NotToolRequest(val response: String) : AgentToolExecution()
     data class Completed(val toolName: String, val output: String) : AgentToolExecution()
-    data class NeedsConfirmation(val toolName: String, val path: String) : AgentToolExecution()
+    data class NeedsConfirmation(
+        val toolName: String,
+        val path: String,
+        val contentPreview: String = ""
+    ) : AgentToolExecution()
     data class Rejected(val reason: String) : AgentToolExecution()
 }
 
@@ -104,7 +108,11 @@ class AgentToolCoordinator(
                     is ToolDispatchResult.Executed ->
                         AgentToolExecution.Completed("write_file", result.value)
                     ToolDispatchResult.ConfirmationRequired ->
-                        AgentToolExecution.NeedsConfirmation("write_file", request.path)
+                        AgentToolExecution.NeedsConfirmation(
+                            toolName = "write_file",
+                            path = request.path,
+                            contentPreview = request.content.take(4_000)
+                        )
                     ToolDispatchResult.Denied ->
                         AgentToolExecution.Rejected("A política de segurança negou a alteração solicitada.")
                 }
