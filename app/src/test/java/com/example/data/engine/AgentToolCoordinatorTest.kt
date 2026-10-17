@@ -37,6 +37,31 @@ class AgentToolCoordinatorTest {
     }
 
     @Test
+    fun dispatchesSafeCommandAndReturnsRealOutput() {
+        val root = temporaryFolder.newFolder("command-workspace")
+        val coordinator = AgentToolCoordinator(WorkspaceFileTools(root), WorkspaceCommandRunner(root))
+        val result = coordinator.execute(
+            """{"tool":"run_command","command":"pwd"}""",
+            AgentMode.ASK,
+            ChatIntent.EXPLANATION
+        )
+        assertTrue(result is AgentToolExecution.Completed)
+        assertTrue((result as AgentToolExecution.Completed).output.contains(root.canonicalPath))
+    }
+
+    @Test
+    fun commandRequestIsDeniedForAmbiguousIntent() {
+        val root = temporaryFolder.newFolder("ambiguous-workspace")
+        val coordinator = AgentToolCoordinator(WorkspaceFileTools(root), WorkspaceCommandRunner(root))
+        val result = coordinator.execute(
+            """{"tool":"run_command","command":"pwd"}""",
+            AgentMode.ASK,
+            ChatIntent.AMBIGUOUS
+        )
+        assertTrue(result is AgentToolExecution.Rejected)
+    }
+
+    @Test
     fun ordinaryModelTextIsNotExecutedAsATool() {
         val (coordinator) = coordinator()
         val result = coordinator.execute("A resposta é 391.", AgentMode.ASK, ChatIntent.DISCUSSION)
