@@ -89,7 +89,7 @@ class DevAgentEngine(
             append("Não confunda esse workspace com o repositório GitHub selecionado.")
         }
 
-        val coordinator = AgentToolCoordinator(WorkspaceFileTools(workspaceRoot))
+        val coordinator = AgentToolCoordinator(WorkspaceFileTools(workspaceRoot), WorkspaceCommandRunner(workspaceRoot))
         val loop = AgentToolLoop(coordinator, maxToolCalls = 4)
         val result = loop.run(
             initialPrompt = promptWithContext,
