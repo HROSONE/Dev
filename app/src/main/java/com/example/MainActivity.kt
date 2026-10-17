@@ -322,9 +322,17 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
     }
 
     Scaffold(
-        modifier = Modifier.fillMaxSize().background(DarkBackground),
+        modifier = Modifier
+            .fillMaxSize()
+            .background(DarkBackground),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            Column(Modifier.fillMaxWidth().background(DarkBackground)) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .background(DarkBackground)
+                    .statusBarsPadding()
+            ) {
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -422,6 +430,7 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
         },
         bottomBar = {
             NavigationBar(
+                modifier = Modifier.navigationBarsPadding(),
                 containerColor = DarkBackground,
                 contentColor = AccentCyan,
                 tonalElevation = 0.dp
