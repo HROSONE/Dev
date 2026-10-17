@@ -47,6 +47,13 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
     var repoInputText by remember { mutableStateOf(uiState.activeRepo) }
     var githubTokenText by remember { mutableStateOf("") }
 
+    LaunchedEffect(uiState.repositoryStatus) {
+        if (uiState.repositoryStatus.startsWith("Conectado")) {
+            showRepoDialog = false
+            githubTokenText = ""
+        }
+    }
+
     if (showRepoDialog) {
         AlertDialog(
             onDismissRequest = { showRepoDialog = false },
@@ -107,7 +114,9 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                 TextButton(
                     enabled = !uiState.isConnectingRepo && repoInputText.isNotBlank(),
                     onClick = {
-                        viewModel.connectRepository(repoInputText, githubTokenText)
+                        val tokenForRequest = githubTokenText
+                        githubTokenText = ""
+                        viewModel.connectRepository(repoInputText, tokenForRequest)
                     }
                 ) {
                     Text(if (uiState.isConnectingRepo) "Conectando…" else "Conectar", color = AccentCyan)
