@@ -132,6 +132,6 @@ class WorkspaceCommandRunner(
     }
 
     private companion object {
-        val SHELL_META = setOf(';', '|', '&', '>', '<', '`', '$', '(', ')', '\\n', '\\r')
+        val SHELL_META = setOf(';', '|', '&', '>', '<', '`', '$', '(', ')')
     }
 }
