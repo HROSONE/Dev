@@ -25,7 +25,8 @@ class AgentToolLoop(
         mode: AgentMode,
         intent: ChatIntent,
         requestModel: suspend (conversation: String) -> Result<String>,
-        confirmMutation: suspend (toolName: String, path: String) -> Boolean = { _, _ -> false },
+        confirmMutation: suspend (toolName: String, path: String, contentPreview: String) -> Boolean =
+            { _, _, _ -> false },
         onToolEvent: suspend (ToolLoopEvent) -> Unit = {}
     ): AgentLoopResult {
         val conversation = StringBuilder(initialPrompt)
@@ -107,7 +108,11 @@ class AgentToolLoop(
                     if (finalOnly) {
                         return AgentLoopResult.Failed("Limite de ferramentas atingido.", toolCalls)
                     }
-                    val approved = confirmMutation(execution.toolName, execution.path)
+                    val approved = confirmMutation(
+                        execution.toolName,
+                        execution.path,
+                        execution.contentPreview
+                    )
                     if (!approved) {
                         onToolEvent(
                             ToolLoopEvent.Completed(
