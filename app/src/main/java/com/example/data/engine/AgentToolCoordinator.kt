@@ -70,6 +70,9 @@ class AgentToolCoordinator(
                 }
             }
             is AgentToolRequest.RunCommand -> {
+                if (ToolExecutionPolicy.evaluate(mode, intent, ToolRisk.READ_ONLY) != ToolPolicyDecision.ALLOW) {
+                    return AgentToolExecution.Rejected("A política de segurança negou a execução do comando.")
+                }
                 val runner = commandRunner
                     ?: return AgentToolExecution.Rejected("Execução de comandos não está configurada.")
                 try {
