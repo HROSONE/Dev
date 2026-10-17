@@ -3,7 +3,7 @@ package com.example.data.model
 enum class AgentMode(val label: String, val subtitle: String, val iconDescription: String) {
     ASK("Pergunte", "Consultas rápidas e explicações", "Modo Pergunta"),
     IMAGINE("Imagine", "Arquitetura e especificações", "Modo Especificação"),
-    BUILD("Construir", "Agente autônomo com execução", "Modo Construtor")
+    BUILD("Construir", "Propostas de código; execução em desenvolvimento", "Modo Construtor")
 }
 
 enum class ReasoningSpeed(val label: String, val modelName: String, val badge: String) {
