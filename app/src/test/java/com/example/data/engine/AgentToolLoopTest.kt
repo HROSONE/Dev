@@ -34,7 +34,7 @@ class AgentToolLoopTest {
         )
         assertEquals(AgentLoopResult.FinalAnswer("The file defines an empty main function.", 1), result)
         assertTrue(secondPrompt.contains("fun main() = Unit"))
-        assertTrue(secondPrompt.contains("untrusted"))
+        assertTrue(secondPrompt.contains("não confiável"))
     }
 
     @Test fun writeRequiresExplicitApproval() = runBlocking {
