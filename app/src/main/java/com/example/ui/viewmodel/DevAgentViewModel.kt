@@ -544,13 +544,13 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
             val o = oldLines.getOrNull(i)
             val n = newLines.getOrNull(i)
             when {
-                o == null && n != null -> result += DiffLine("+ $n", DiffLineType.ADDED)
-                n == null && o != null -> result += DiffLine("- $o", DiffLineType.REMOVED)
+                o == null && n != null -> result += DiffLine(DiffLineType.ADDED, "+ $n")
+                n == null && o != null -> result += DiffLine(DiffLineType.REMOVED, "- $o")
                 o != null && n != null && o != n -> {
-                    result += DiffLine("- $o", DiffLineType.REMOVED)
-                    result += DiffLine("+ $n", DiffLineType.ADDED)
+                    result += DiffLine(DiffLineType.REMOVED, "- $o")
+                    result += DiffLine(DiffLineType.ADDED, "+ $n")
                 }
-                o != null -> result += DiffLine("  $o", DiffLineType.CONTEXT)
+                o != null -> result += DiffLine(DiffLineType.CONTEXT, "  $o")
             }
         }
         return result
