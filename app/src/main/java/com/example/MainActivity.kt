@@ -502,6 +502,7 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                 )
                 1 -> SandboxWorkspaceScreen(
                     activeRepo = uiState.activeRepo,
+                    repositoryStatus = uiState.repositoryStatus,
                     files = uiState.repoFiles,
                     selectedFile = uiState.selectedFile,
                     onSelectFile = { viewModel.selectFile(it) },
