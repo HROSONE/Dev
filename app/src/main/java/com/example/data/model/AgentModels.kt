@@ -11,6 +11,33 @@ enum class ReasoningSpeed(val label: String, val modelName: String, val badge: S
     DEEP_THINKING("🧠 Raciocínio Profundo", "gemini-3.8-flash", "Flash CoT")
 }
 
+enum class LlmProvider(val label: String) {
+    GEMINI("Google Gemini"),
+    OPENROUTER("OpenRouter")
+    ;
+
+    companion object {
+        const val DEFAULT_OPENROUTER_MODEL = "qwen/qwen3.8-27b:free"
+
+        val openRouterPresets: List<OpenRouterModelPreset> = listOf(
+            OpenRouterModelPreset("Qwen 3.8 27B (free)", "qwen/qwen3.8-27b:free", free = true),
+            OpenRouterModelPreset("DeepSeek V4.1 Flash", "deepseek/deepseek-v4.1-flash", free = false),
+            OpenRouterModelPreset("DeepSeek V4 Flash", "deepseek/deepseek-v4-flash", free = false),
+            OpenRouterModelPreset("Claude Sonnet 5.5", "anthropic/claude-sonnet-5.5", free = false),
+            OpenRouterModelPreset("GPT Luna", "openai/gpt-luna", free = false),
+            OpenRouterModelPreset("GLM 5.3 Flash", "z-ai/glm-5.3-flash", free = false),
+            OpenRouterModelPreset("Nemotron 3.5 Lightning (free)", "nvidia/nemotron-3.5-lightning:free", free = true),
+            OpenRouterModelPreset("OpenRouter free auto", "openrouter/free", free = true)
+        )
+    }
+}
+
+data class OpenRouterModelPreset(
+    val label: String,
+    val id: String,
+    val free: Boolean
+)
+
 enum class ToolType(val displayName: String, val category: String) {
     LIST_FILES("list_files", "Workspace"),
     READ_FILE("read_file", "Workspace"),
