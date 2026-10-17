@@ -42,11 +42,11 @@ class AgentToolCoordinator(
                         val files = result.value
                         val shown = files.take(maxListedFiles)
                         val suffix = if (files.size > shown.size) {
-                            "\\n… e mais ${files.size - shown.size} arquivos."
+                            "\n… e mais ${files.size - shown.size} arquivos."
                         } else ""
                         AgentToolExecution.Completed(
                             toolName = "list_files",
-                            output = (shown.joinToString("\\n") + suffix).take(maxOutputChars)
+                            output = (shown.joinToString("\n") + suffix).take(maxOutputChars)
                         )
                     }
                     ToolDispatchResult.ConfirmationRequired ->
@@ -60,7 +60,7 @@ class AgentToolCoordinator(
                     is ToolDispatchResult.Executed -> AgentToolExecution.Completed(
                         toolName = "read_file",
                         output = result.value.take(maxOutputChars) +
-                            if (result.value.length > maxOutputChars) "\\n[Conteúdo truncado pelo limite de saída.]" else ""
+                            if (result.value.length > maxOutputChars) "\n[Conteúdo truncado pelo limite de saída.]" else ""
                     )
                     ToolDispatchResult.ConfirmationRequired ->
                         AgentToolExecution.Rejected("A política exige confirmação para esta operação.")
