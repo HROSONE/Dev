@@ -156,7 +156,20 @@ class GitHubRepositoryClient(
     private fun isIgnoredPath(path: String): Boolean {
         val parts = path.lowercase().split("/")
         val name = parts.lastOrNull().orEmpty()
-        return parts.any { it in setOf(".git", ".gradle", "node_modules", "build", "dist", "vendor") } ||
+        val sensitiveName = name == ".env" ||
+            name.startsWith(".env.") ||
+            name.contains("secret") ||
+            name.contains("credential") ||
+            name.contains("private_key") ||
+            name.endsWith(".jks") ||
+            name.endsWith(".keystore") ||
+            name.endsWith(".pem") ||
+            name.endsWith(".p12") ||
+            name.endsWith(".pfx") ||
+            name.endsWith(".key") ||
+            name == "google-services.json"
+        return sensitiveName ||
+            parts.any { it in setOf(".git", ".gradle", "node_modules", "build", "dist", "vendor") } ||
             name in setOf("package-lock.json", "yarn.lock", "pnpm-lock.yaml", "gradle.lockfile") ||
             name.endsWith(".min.js") || name.endsWith(".map")
     }
