@@ -54,9 +54,12 @@ class AgentToolLoopTest {
             "Create file", AgentMode.BUILD, ChatIntent.IMPLEMENTATION_REQUEST,
             requestModel = {
                 calls++
-                Result.success(if (calls == 1) """{"tool":"write_file","path":"new.txt","content":"hello"}""" else "File created.")
+                Result.success(
+                    if (calls == 1) """{"tool":"write_file","path":"new.txt","content":"hello"}"""
+                    else "File created."
+                )
             },
-            confirmMutation = { name, path -> name == "write_file" && path == "new.txt" }
+            confirmMutation = { name, path, _ -> name == "write_file" && path == "new.txt" }
         )
         assertEquals(AgentLoopResult.FinalAnswer("File created.", 1), result)
         assertEquals("hello", File(root, "new.txt").readText())
@@ -70,7 +73,10 @@ class AgentToolLoopTest {
             requestModel = { prompt ->
                 calls++
                 if (calls == 1) Result.success("""{"tool":"read_file","path":"src/Main.kt"}""")
-                else { assertTrue(prompt.contains("Limite de ferramentas atingido")); Result.success("Done.") }
+                else {
+                    assertTrue(prompt.contains("Limite de ferramentas atingido"))
+                    Result.success("Done.")
+                }
             }
         )
         assertEquals(AgentLoopResult.FinalAnswer("Done.", 1), result)
