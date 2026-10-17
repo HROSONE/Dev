@@ -3,6 +3,8 @@ package com.example.ui.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.api.ApiKeyStore
+import com.example.data.api.GeminiClient
 import com.example.data.api.GitHubRepositoryClient
 import com.example.data.engine.AgentExecutionEvent
 import com.example.data.engine.DevAgentEngine
@@ -41,7 +43,11 @@ data class DevAgentUiState(
     ),
     val isCommitting: Boolean = false,
     val lastCommitStatus: String = "",
-    val hasWriteToken: Boolean = false
+    val hasWriteToken: Boolean = false,
+    /** true se há chave Gemini (usuário ou BuildConfig). */
+    val hasGeminiKey: Boolean = false,
+    /** Status após salvar chave (feedback na UI). */
+    val apiKeyStatus: String = ""
 )
 
 class DevAgentViewModel(application: Application) : AndroidViewModel(application) {
@@ -50,6 +56,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
     private val engine: DevAgentEngine by lazy { DevAgentEngine(workspaceDir) }
     private val githubClient = GitHubRepositoryClient()
     private val commandRunner by lazy { WorkspaceCommandRunner(workspaceDir) }
+    private val apiKeyStore = ApiKeyStore(application)
     private var activeJob: Job? = null
 
     private var sessionToken: String = ""
@@ -58,6 +65,46 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
 
     private val _uiState = MutableStateFlow(DevAgentUiState())
     val uiState: StateFlow<DevAgentUiState> = _uiState.asStateFlow()
+
+    init {
+        // Carrega chave salva e aplica no client
+        val key = apiKeyStore.resolveGeminiKey()
+        if (key.isNotBlank()) {
+            GeminiClient.setApiKey(key)
+        }
+        _uiState.update {
+            it.copy(hasGeminiKey = apiKeyStore.isConfigured())
+        }
+    }
+
+    /** Retorna a chave salva pelo usuário (para o campo de Configurações). */
+    fun getStoredApiKey(): String = apiKeyStore.getUserKey()
+
+    fun saveGeminiApiKey(key: String) {
+        val trimmed = key.trim()
+        if (trimmed.isBlank()) {
+            apiKeyStore.clearUserKey()
+            GeminiClient.setApiKey("")
+            // Pode ainda ter BuildConfig
+            val fallback = apiKeyStore.resolveGeminiKey()
+            if (fallback.isNotBlank()) GeminiClient.setApiKey(fallback)
+            _uiState.update {
+                it.copy(
+                    hasGeminiKey = apiKeyStore.isConfigured(),
+                    apiKeyStatus = if (apiKeyStore.isConfigured()) "Chave do usuário removida (usando build)." else "Chave removida."
+                )
+            }
+            return
+        }
+        apiKeyStore.setUserKey(trimmed)
+        GeminiClient.setApiKey(trimmed)
+        _uiState.update {
+            it.copy(
+                hasGeminiKey = true,
+                apiKeyStatus = "Chave Gemini salva neste aparelho."
+            )
+        }
+    }
 
     fun setMode(mode: AgentMode) { _uiState.update { it.copy(selectedMode = mode) } }
     fun setSpeed(speed: ReasoningSpeed) { _uiState.update { it.copy(selectedSpeed = speed) } }
@@ -188,6 +235,19 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
     fun submitPrompt() {
         val prompt = _uiState.value.currentPrompt.trim()
         if (prompt.isBlank() || _uiState.value.isThinking) return
+
+        if (!GeminiClient.isApiKeyConfigured()) {
+            _uiState.update {
+                it.copy(
+                    messages = it.messages + ChatMessage(
+                        id = UUID.randomUUID().toString(),
+                        role = MessageRole.SYSTEM,
+                        text = "Configure a API key do Gemini em Configurações (ícone de engrenagem) antes de enviar prompts."
+                    )
+                )
+            }
+            return
+        }
 
         val userMessage = ChatMessage(
             id = UUID.randomUUID().toString(),
