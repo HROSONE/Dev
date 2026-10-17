@@ -4,6 +4,7 @@ import android.net.Uri
 import android.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
@@ -41,6 +42,7 @@ class GitHubRepositoryClient(
         maxFiles: Int = DEFAULT_MAX_FILES
     ): Result<RepositorySnapshot> = withContext(Dispatchers.IO) {
         runCatching {
+          withTimeout(REPOSITORY_READ_TIMEOUT_MS) {
             val fullName = normalizeRepositoryName(repositoryInput)
             val authToken = token.trim()
 
@@ -70,6 +72,13 @@ class GitHubRepositoryClient(
                 candidates += path
             }
 
+            // Prioritize entry points and project configuration over alphabetical tree order,
+            // so a small context window still contains the files most useful for understanding the repo.
+            candidates.sortWith(
+                compareBy<String> { filePriority(it) }
+                    .thenBy { it.count { character -> character == '/' } }
+                    .thenBy { it }
+            )
             val selectedPaths = candidates.take(maxFiles.coerceIn(1, DEFAULT_MAX_FILES))
             val files = mutableListOf<RemoteFile>()
             var totalCharacters = 0
@@ -108,6 +117,20 @@ class GitHubRepositoryClient(
                 defaultBranch = branch,
                 files = files
             )
+          }
+        }
+    }
+
+    private fun filePriority(path: String): Int {
+        val normalized = path.lowercase()
+        val name = normalized.substringAfterLast('/')
+        return when {
+            name in setOf("readme.md", "agents.md", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "gradle.properties", "package.json", "pyproject.toml", "cargo.toml", "go.mod", "pom.xml") -> 0
+            name == "androidmanifest.xml" || normalized.endsWith("/androidmanifest.xml") -> 0
+            normalized.contains("/src/main/") || normalized.startsWith("src/main/") || normalized.contains("/app/src/main/") -> 1
+            normalized.contains("/src/test/") || normalized.startsWith("src/test/") || normalized.contains("/tests/") -> 2
+            normalized.startsWith("docs/") || normalized.contains("/docs/") -> 3
+            else -> 4
         }
     }
 
@@ -216,5 +239,6 @@ class GitHubRepositoryClient(
         const val DEFAULT_MAX_FILES = 30
         const val MAX_FILE_BYTES = 80_000L
         const val MAX_TOTAL_CHARACTERS = 400_000
+        const val REPOSITORY_READ_TIMEOUT_MS = 90_000L
     }
 }
