@@ -7,6 +7,7 @@ import com.example.data.api.GitHubRepositoryClient
 import com.example.data.engine.AgentExecutionEvent
 import com.example.data.engine.DevAgentEngine
 import com.example.data.model.*
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -25,76 +26,29 @@ data class DevAgentUiState(
     val thinkingSeconds: Double = 0.0,
     val commandsExecuted: Int = 0,
     val currentPrompt: String = "",
-    val activeTab: Int = 0, // 0: Chat, 1: Sandbox & Files, 2: Arquitetura
+    val activeTab: Int = 0,
     val repoFiles: List<RepoFile> = emptyList(),
     val selectedFile: RepoFile? = null,
     val isConnectingRepo: Boolean = false,
-    val repositoryStatus: String = ""
+    val repositoryStatus: String = "",
+    val pendingMutation: PendingMutation? = null
 )
 
 class DevAgentViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val engine: DevAgentEngine by lazy {
-        DevAgentEngine(File(getApplication<Application>().filesDir, "devagent-workspace"))
-    }
+    private val workspaceDir = File(getApplication<Application>().filesDir, "devagent-workspace")
+    private val engine: DevAgentEngine by lazy { DevAgentEngine(workspaceDir) }
     private val githubClient = GitHubRepositoryClient()
     private var activeJob: Job? = null
 
-    private val _uiState = MutableStateFlow(
-        DevAgentUiState(
-            repoFiles = emptyList()
-        )
-    )
-    val uiState: StateFlow<DevAgentUiState> = _uiState.asStateFlow()
+    /** Deferred atual aguardando a decisão do usuário sobre uma mutação. */
+    private var mutationDecision: CompletableDeferred<Boolean>? = null
 
-    init {
-        _uiState.update { it.copy(selectedFile = it.repoFiles.firstOrNull()) }
-    }
+    private val _uiState = MutableStateFlow(DevAgentUiState())
+    val uiState: StateFlow<DevAgentUiState> = _uiState.asStateFlow()
 
     fun setMode(mode: AgentMode) {
         _uiState.update { it.copy(selectedMode = mode) }
-    }
-
-    /**
-     * Reads real repository files from GitHub. The optional token is used only for this request
-     * and is not saved in the ViewModel or persistent storage.
-     */
-    fun connectRepository(repository: String, token: String = "") {
-        if (_uiState.value.isConnectingRepo) return
-        _uiState.update {
-            it.copy(isConnectingRepo = true, repositoryStatus = "Conectando ao GitHub…")
-        }
-        viewModelScope.launch {
-            val result = githubClient.readRepository(repository, token)
-            result.fold(
-                onSuccess = { snapshot ->
-                    val files = snapshot.files.map { remote ->
-                        RepoFile(
-                            path = remote.path,
-                            language = remote.language,
-                            content = remote.content
-                        )
-                    }
-                    _uiState.update { state ->
-                        state.copy(
-                            activeRepo = snapshot.fullName,
-                            repoFiles = files,
-                            selectedFile = files.firstOrNull(),
-                            isConnectingRepo = false,
-                            repositoryStatus = "Conectado a ${snapshot.fullName} · branch ${snapshot.defaultBranch} · ${files.size} arquivos lidos"
-                        )
-                    }
-                },
-                onFailure = { error ->
-                    _uiState.update {
-                        it.copy(
-                            isConnectingRepo = false,
-                            repositoryStatus = error.message ?: "Não foi possível ler o repositório."
-                        )
-                    }
-                }
-            )
-        }
     }
 
     fun setSpeed(speed: ReasoningSpeed) {
@@ -128,9 +82,66 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun stopExecution() {
+        mutationDecision?.complete(false)
+        mutationDecision = null
         activeJob?.cancel()
         activeJob = null
-        _uiState.update { it.copy(isThinking = false) }
+        _uiState.update {
+            it.copy(isThinking = false, pendingMutation = null)
+        }
+    }
+
+    /**
+     * Chamado pela UI quando o usuário aprova ou rejeita a gravação proposta.
+     */
+    fun respondToMutation(approved: Boolean) {
+        mutationDecision?.complete(approved)
+        mutationDecision = null
+        _uiState.update { it.copy(pendingMutation = null) }
+    }
+
+    /**
+     * Reads real repository files from GitHub and materializes them into the local workspace.
+     * The optional token is used only for this request and is never persisted.
+     */
+    fun connectRepository(repository: String, token: String = "") {
+        if (_uiState.value.isConnectingRepo) return
+        _uiState.update {
+            it.copy(isConnectingRepo = true, repositoryStatus = "Conectando ao GitHub…")
+        }
+        viewModelScope.launch {
+            val result = githubClient.readRepository(repository, token)
+            result.fold(
+                onSuccess = { snapshot ->
+                    val files = snapshot.files.map { remote ->
+                        RepoFile(
+                            path = remote.path,
+                            language = remote.language,
+                            content = remote.content
+                        )
+                    }
+                    // Materializa no workspace isolado para as ferramentas operarem de verdade.
+                    engine.syncRepositoryToWorkspace(files)
+                    _uiState.update { state ->
+                        state.copy(
+                            activeRepo = snapshot.fullName,
+                            repoFiles = files,
+                            selectedFile = files.firstOrNull(),
+                            isConnectingRepo = false,
+                            repositoryStatus = "Conectado a ${snapshot.fullName} · branch ${snapshot.defaultBranch} · ${files.size} arquivos sincronizados no workspace"
+                        )
+                    }
+                },
+                onFailure = { error ->
+                    _uiState.update {
+                        it.copy(
+                            isConnectingRepo = false,
+                            repositoryStatus = error.message ?: "Não foi possível ler o repositório."
+                        )
+                    }
+                }
+            )
+        }
     }
 
     fun submitPrompt() {
@@ -160,7 +171,8 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                 messages = state.messages + listOf(userMessage, initialAgentMessage),
                 currentPrompt = "",
                 isThinking = true,
-                thinkingSeconds = 0.0
+                thinkingSeconds = 0.0,
+                pendingMutation = null
             )
         }
 
@@ -171,7 +183,22 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                     mode = _uiState.value.selectedMode,
                     speed = _uiState.value.selectedSpeed,
                     repositoryName = _uiState.value.activeRepo,
-                    repositoryFiles = _uiState.value.repoFiles
+                    repositoryFiles = _uiState.value.repoFiles,
+                    confirmMutation = { toolName, path, contentPreview ->
+                        val deferred = CompletableDeferred<Boolean>()
+                        mutationDecision = deferred
+                        _uiState.update {
+                            it.copy(
+                                pendingMutation = PendingMutation(
+                                    toolName = toolName,
+                                    path = path,
+                                    contentPreview = contentPreview,
+                                    messageId = agentMessageId
+                                )
+                            )
+                        }
+                        deferred.await()
+                    }
                 ).collect { event ->
                     when (event) {
                         is AgentExecutionEvent.ThinkingTick -> {
@@ -217,14 +244,23 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                             _uiState.update { state ->
                                 val updatedMessages = state.messages.map { msg ->
                                     if (msg.id == agentMessageId) {
-                                        val updatedTools = msg.toolCalls.map { t ->
-                                            if (t.id == event.toolCall.id) event.toolCall else t
+                                        val existing = msg.toolCalls.any { it.id == event.toolCall.id }
+                                        val updatedTools = if (existing) {
+                                            msg.toolCalls.map { t ->
+                                                if (t.id == event.toolCall.id) event.toolCall else t
+                                            }
+                                        } else {
+                                            msg.toolCalls + event.toolCall
                                         }
                                         msg.copy(toolCalls = updatedTools)
                                     } else msg
                                 }
                                 state.copy(messages = updatedMessages)
                             }
+                        }
+
+                        is AgentExecutionEvent.MutationProposed -> {
+                            // Já tratado pelo callback confirmMutation; evento informativo.
                         }
 
                         is AgentExecutionEvent.FinalResponseChunk -> {
@@ -240,15 +276,19 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                                 }
                                 state.copy(
                                     messages = updatedMessages,
-                                    isThinking = false
+                                    isThinking = false,
+                                    pendingMutation = null
                                 )
                             }
+                            // Atualiza a lista de arquivos do sandbox se houve escrita.
+                            refreshWorkspaceFiles()
                         }
 
                         is AgentExecutionEvent.Error -> {
                             _uiState.update { state ->
                                 state.copy(
                                     isThinking = false,
+                                    pendingMutation = null,
                                     messages = state.messages.map { msg ->
                                         if (msg.id == agentMessageId) {
                                             msg.copy(text = event.message, isThinking = false)
@@ -260,13 +300,17 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                     }
                 }
             } catch (e: Exception) {
+                mutationDecision?.complete(false)
+                mutationDecision = null
                 _uiState.update { state ->
                     state.copy(
                         isThinking = false,
+                        pendingMutation = null,
                         messages = state.messages.map { msg ->
                             if (msg.id == agentMessageId) {
                                 msg.copy(
-                                    text = "A execução foi interrompida: ${e.message ?: "erro inesperado"}. Nenhuma alteração foi confirmada.",
+                                    text = "A execução foi interrompida: ${e.message ?: "erro inesperado"}. " +
+                                        "Nenhuma alteração não confirmada foi aplicada.",
                                     isThinking = false
                                 )
                             } else msg
@@ -277,4 +321,52 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    private fun refreshWorkspaceFiles() {
+        viewModelScope.launch {
+            try {
+                if (!workspaceDir.exists()) return@launch
+                val files = workspaceDir.walkTopDown()
+                    .filter { it.isFile }
+                    .mapNotNull { file ->
+                        val relative = file.relativeTo(workspaceDir).invariantSeparatorsPath
+                        try {
+                            RepoFile(
+                                path = relative,
+                                language = languageFor(relative),
+                                content = file.readText(Charsets.UTF_8).take(50_000),
+                                isModified = true
+                            )
+                        } catch (_: Exception) {
+                            null
+                        }
+                    }
+                    .sortedBy { it.path }
+                    .toList()
+                if (files.isNotEmpty()) {
+                    _uiState.update { state ->
+                        state.copy(
+                            repoFiles = files,
+                            selectedFile = state.selectedFile?.let { sel ->
+                                files.find { it.path == sel.path } ?: files.firstOrNull()
+                            } ?: files.firstOrNull()
+                        )
+                    }
+                }
+            } catch (_: Exception) {
+                // best-effort
+            }
+        }
+    }
+
+    private fun languageFor(path: String): String = when (path.substringAfterLast('.').lowercase()) {
+        "kt", "kts" -> "kotlin"
+        "java" -> "java"
+        "xml" -> "xml"
+        "json" -> "json"
+        "md" -> "markdown"
+        "py" -> "python"
+        "js", "jsx" -> "javascript"
+        "ts", "tsx" -> "typescript"
+        else -> "text"
+    }
 }
