@@ -1,6 +1,6 @@
 package com.example.data.engine
 
-import com.example.data.api.GeminiClient
+import com.example.data.api.LlmGateway
 import com.example.data.model.AgentMetrics
 import com.example.data.model.AgentMode
 import com.example.data.model.ExecutionStatus
@@ -27,11 +27,6 @@ sealed class AgentExecutionEvent {
     ) : AgentExecutionEvent()
 }
 
-/**
- * Connects Gemini to a bounded allowlisted workspace-tool loop.
- * The workspace is supplied by the host and must be app-owned.
- * Mutations require an explicit user-confirmation callback from the host.
- */
 class DevAgentEngine(
     private val workspaceRoot: File
 ) {
@@ -48,20 +43,22 @@ class DevAgentEngine(
         val startedAt = System.currentTimeMillis()
         emit(AgentExecutionEvent.ThinkingTick(0.0))
 
-        if (!GeminiClient.isApiKeyConfigured()) {
+        if (!LlmGateway.isConfigured()) {
             emit(
                 AgentExecutionEvent.Error(
-                    "A chave do Gemini não está configurada. Nenhuma ação foi executada. " +
-                        "Configure GEMINI_API_KEY no .env ou no painel de Secrets."
+                    "Nenhuma API key configurada para ${LlmGateway.activeProvider.label}. " +
+                        "Abra Configurações (engrenagem), escolha o provedor e cole a chave."
                 )
             )
             return@flow
         }
 
+        emit(AgentExecutionEvent.ThoughtStepAdded("LLM: ${LlmGateway.statusLabel()}"))
+
         val intent = ChatIntentClassifier.classify(userPrompt)
         emit(
             AgentExecutionEvent.ThoughtStepAdded(
-                "Intenção identificada: ${intent.name.lowercase().replace('_', ' ')}"
+                "Intenção: ${intent.name.lowercase().replace('_', ' ')}"
             )
         )
 
@@ -98,10 +95,7 @@ class DevAgentEngine(
                 )
             }
             if (repositoryFiles.isNotEmpty()) {
-                append(
-                    " O contexto de arquivos abaixo foi lido do GitHub e está disponível no workspace local " +
-                        "para análise e edição confirmada."
-                )
+                append(" O contexto de arquivos abaixo foi lido do GitHub e está disponível no workspace local.")
             } else {
                 append(" Nenhum conteúdo de arquivo do repositório GitHub está disponível no contexto desta solicitação.")
             }
@@ -132,9 +126,9 @@ class DevAgentEngine(
             mode = mode,
             intent = intent,
             requestModel = { conversation ->
-                GeminiClient.queryGemini(
+                LlmGateway.query(
                     prompt = conversation,
-                    modelName = speed.modelName,
+                    geminiModelName = speed.modelName,
                     systemInstruction = systemPrompt
                 )
             },
@@ -250,10 +244,6 @@ class DevAgentEngine(
         return output.toString().take(maxContextChars)
     }
 
-    /**
-     * Materializa os arquivos do GitHub no workspace local isolado do app,
-     * para que list_files / read_file / write_file operem sobre o conteúdo real.
-     */
     fun syncRepositoryToWorkspace(files: List<RepoFile>) {
         if (!workspaceRoot.exists()) workspaceRoot.mkdirs()
         for (file in files) {
@@ -263,7 +253,6 @@ class DevAgentEngine(
                 target.parentFile?.mkdirs()
                 target.writeText(file.content, Charsets.UTF_8)
             } catch (_: Exception) {
-                // Ignora arquivos que falharem na sincronização; o contexto ainda está no prompt.
             }
         }
     }
