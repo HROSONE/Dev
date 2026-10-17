@@ -1,0 +1,6 @@
+{
+  "name": "DevAgent",
+  "description": "Autonomous AI Coding Agent with live planning, GitHub navigation, and sandbox tool execution.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
