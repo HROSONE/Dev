@@ -295,7 +295,23 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                     val files = snapshot.files.map {
                         RepoFile(path = it.path, language = it.language, content = it.content)
                     }
-                    engine.syncRepositoryToWorkspace(files)
+                    val sync = withContext(Dispatchers.IO) {
+                        engine.syncRepositoryToWorkspace(files)
+                    }
+                    val syncSummary = buildString {
+                        append("Conectado a ${snapshot.fullName} · ${files.size} arquivos")
+                        append(" · workspace: ${sync.copiedFiles} copiados")
+                        if (sync.failedFiles.isNotEmpty()) {
+                            append(" · ${sync.failedFiles.size} falhas")
+                            sync.errors.take(3).forEach { error ->
+                                append("\n")
+                                append(error)
+                            }
+                            if (sync.errors.size > 3) {
+                                append("\n… e mais ${sync.errors.size - 3} erro(s)")
+                            }
+                        }
+                    }
                     _uiState.update {
                         it.copy(
                             activeRepo = snapshot.fullName,
@@ -303,7 +319,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                             selectedFile = files.firstOrNull(),
                             isConnectingRepo = false,
                             hasWriteToken = sessionToken.isNotBlank(),
-                            repositoryStatus = "Conectado a ${snapshot.fullName} · ${files.size} arquivos"
+                            repositoryStatus = syncSummary
                         )
                     }
                 },
