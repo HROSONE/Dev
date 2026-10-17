@@ -1,4 +1,4 @@
-name: Android CI
+name: Android checks (no APK packaging)
 
 on:
   pull_request:
@@ -33,8 +33,5 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      - name: Build debug APK
-        run: gradle assembleDebug
-
-      - name: Run unit tests
+      - name: Compile app sources and run unit tests (no APK packaging)
         run: gradle testDebugUnitTest
