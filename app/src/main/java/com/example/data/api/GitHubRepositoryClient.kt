@@ -5,17 +5,19 @@ import android.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
- * Read-only GitHub REST client.
+ * GitHub REST client.
  *
  * Tokens are supplied by the caller and are never persisted by this class.
- * This client deliberately does not implement writes or command execution.
+ * Writes require an explicit token with contents:write scope.
  */
 class GitHubRepositoryClient(
     private val http: OkHttpClient = OkHttpClient.Builder()
@@ -36,88 +38,174 @@ class GitHubRepositoryClient(
         val content: String
     )
 
+    data class CommitResult(
+        val path: String,
+        val commitSha: String,
+        val htmlUrl: String,
+        val message: String
+    )
+
     suspend fun readRepository(
         repositoryInput: String,
         token: String = "",
         maxFiles: Int = DEFAULT_MAX_FILES
     ): Result<RepositorySnapshot> = withContext(Dispatchers.IO) {
         runCatching {
-          withTimeout(REPOSITORY_READ_TIMEOUT_MS) {
-            val fullName = normalizeRepositoryName(repositoryInput)
-            val authToken = token.trim()
+            withTimeout(REPOSITORY_READ_TIMEOUT_MS) {
+                val fullName = normalizeRepositoryName(repositoryInput)
+                val authToken = token.trim()
 
-            val repository = getJson(
-                "https://api.github.com/repos/$fullName",
-                authToken
-            )
-            val canonicalName = repository.getString("full_name")
-            val branch = repository.getString("default_branch")
-            val tree = getJson(
-                "https://api.github.com/repos/$canonicalName/git/trees/${Uri.encode(branch)}?recursive=1",
-                authToken
-            )
-
-            if (tree.optBoolean("truncated", false)) {
-                throw IOException("O repositório é grande demais para esta leitura inicial. A árvore retornada pelo GitHub foi truncada.")
-            }
-
-            val entries = tree.optJSONArray("tree")
-                ?: throw IOException("O GitHub não retornou a árvore de arquivos.")
-            val candidates = mutableListOf<String>()
-            for (index in 0 until entries.length()) {
-                val entry = entries.optJSONObject(index) ?: continue
-                if (entry.optString("type") != "blob") continue
-                val path = entry.optString("path")
-                if (path.isBlank() || isIgnoredPath(path) || !isTextCandidate(path)) continue
-                candidates += path
-            }
-
-            // Prioritize entry points and project configuration over alphabetical tree order,
-            // so a small context window still contains the files most useful for understanding the repo.
-            candidates.sortWith(
-                compareBy<String> { filePriority(it) }
-                    .thenBy { it.count { character -> character == '/' } }
-                    .thenBy { it }
-            )
-            val selectedPaths = candidates.take(maxFiles.coerceIn(1, DEFAULT_MAX_FILES))
-            val files = mutableListOf<RemoteFile>()
-            var totalCharacters = 0
-
-            for (path in selectedPaths) {
-                if (totalCharacters >= MAX_TOTAL_CHARACTERS) break
-                val encodedPath = path.split("/").joinToString("/") { Uri.encode(it) }
-                val response = getJson(
-                    "https://api.github.com/repos/$canonicalName/contents/$encodedPath?ref=${Uri.encode(branch)}",
+                val repository = getJson(
+                    "https://api.github.com/repos/$fullName",
                     authToken
                 )
-                if (response.optString("type") != "file") continue
-                if (response.optLong("size", Long.MAX_VALUE) > MAX_FILE_BYTES) continue
-                val encoded = response.optString("content").replace("\n", "")
-                if (encoded.isBlank()) continue
-
-                val decoded = try {
-                    String(Base64.decode(encoded, Base64.DEFAULT), Charsets.UTF_8)
-                } catch (_: IllegalArgumentException) {
-                    continue
-                }
-                if (decoded.indexOf('\u0000') >= 0) continue
-
-                val remaining = MAX_TOTAL_CHARACTERS - totalCharacters
-                val safeContent = decoded.take(remaining)
-                files += RemoteFile(
-                    path = path,
-                    language = languageFor(path),
-                    content = safeContent
+                val canonicalName = repository.getString("full_name")
+                val branch = repository.getString("default_branch")
+                val tree = getJson(
+                    "https://api.github.com/repos/$canonicalName/git/trees/${Uri.encode(branch)}?recursive=1",
+                    authToken
                 )
-                totalCharacters += safeContent.length
+
+                if (tree.optBoolean("truncated", false)) {
+                    throw IOException("O repositório é grande demais para esta leitura inicial. A árvore retornada pelo GitHub foi truncada.")
+                }
+
+                val entries = tree.optJSONArray("tree")
+                    ?: throw IOException("O GitHub não retornou a árvore de arquivos.")
+                val candidates = mutableListOf<String>()
+                for (index in 0 until entries.length()) {
+                    val entry = entries.optJSONObject(index) ?: continue
+                    if (entry.optString("type") != "blob") continue
+                    val path = entry.optString("path")
+                    if (path.isBlank() || isIgnoredPath(path) || !isTextCandidate(path)) continue
+                    candidates += path
+                }
+
+                candidates.sortWith(
+                    compareBy<String> { filePriority(it) }
+                        .thenBy { it.count { character -> character == '/' } }
+                        .thenBy { it }
+                )
+                val selectedPaths = candidates.take(maxFiles.coerceIn(1, DEFAULT_MAX_FILES))
+                val files = mutableListOf<RemoteFile>()
+                var totalCharacters = 0
+
+                for (path in selectedPaths) {
+                    if (totalCharacters >= MAX_TOTAL_CHARACTERS) break
+                    val encodedPath = path.split("/").joinToString("/") { Uri.encode(it) }
+                    val response = getJson(
+                        "https://api.github.com/repos/$canonicalName/contents/$encodedPath?ref=${Uri.encode(branch)}",
+                        authToken
+                    )
+                    if (response.optString("type") != "file") continue
+                    if (response.optLong("size", Long.MAX_VALUE) > MAX_FILE_BYTES) continue
+                    val encoded = response.optString("content").replace("\n", "")
+                    if (encoded.isBlank()) continue
+
+                    val decoded = try {
+                        String(Base64.decode(encoded, Base64.DEFAULT), Charsets.UTF_8)
+                    } catch (_: IllegalArgumentException) {
+                        continue
+                    }
+                    if (decoded.indexOf('\u0000') >= 0) continue
+
+                    val remaining = MAX_TOTAL_CHARACTERS - totalCharacters
+                    val safeContent = decoded.take(remaining)
+                    files += RemoteFile(
+                        path = path,
+                        language = languageFor(path),
+                        content = safeContent
+                    )
+                    totalCharacters += safeContent.length
+                }
+
+                RepositorySnapshot(
+                    fullName = canonicalName,
+                    defaultBranch = branch,
+                    files = files
+                )
+            }
+        }
+    }
+
+    /**
+     * Creates or updates a single file on the default branch.
+     * Requires a token with contents:write. Never persists the token.
+     */
+    suspend fun commitFile(
+        repositoryFullName: String,
+        path: String,
+        content: String,
+        commitMessage: String,
+        token: String,
+        branch: String? = null
+    ): Result<CommitResult> = withContext(Dispatchers.IO) {
+        runCatching {
+            if (token.isBlank()) {
+                throw IOException("É necessário um token GitHub com permissão de escrita (contents:write) para fazer commit.")
+            }
+            val fullName = normalizeRepositoryName(repositoryFullName)
+            val authToken = token.trim()
+
+            val repository = getJson("https://api.github.com/repos/$fullName", authToken)
+            val targetBranch = branch ?: repository.getString("default_branch")
+            val encodedPath = path.split("/").joinToString("/") { Uri.encode(it) }
+
+            var existingSha: String? = null
+            try {
+                val existing = getJson(
+                    "https://api.github.com/repos/$fullName/contents/$encodedPath?ref=${Uri.encode(targetBranch)}",
+                    authToken
+                )
+                existingSha = existing.optString("sha").takeIf { it.isNotBlank() }
+            } catch (_: IOException) {
+                // Arquivo novo
             }
 
-            RepositorySnapshot(
-                fullName = canonicalName,
-                defaultBranch = branch,
-                files = files
-            )
-          }
+            val payload = JSONObject().apply {
+                put("message", commitMessage.take(200).ifBlank { "DevAgent: atualiza $path" })
+                put("content", Base64.encodeToString(content.toByteArray(Charsets.UTF_8), Base64.NO_WRAP))
+                put("branch", targetBranch)
+                if (existingSha != null) put("sha", existingSha)
+            }
+
+            val body = payload.toString().toRequestBody("application/json".toMediaType())
+            val request = Request.Builder()
+                .url("https://api.github.com/repos/$fullName/contents/$encodedPath")
+                .header("Accept", "application/vnd.github+json")
+                .header("X-GitHub-Api-Version", "2022-11-28")
+                .header("Authorization", "Bearer $authToken")
+                .put(body)
+                .build()
+
+            http.newCall(request).execute().use { response ->
+                val responseBody = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    val detail = try {
+                        JSONObject(responseBody).optString("message").take(240)
+                    } catch (_: Exception) {
+                        response.message
+                    }
+                    val hint = when (response.code) {
+                        401 -> " Token inválido."
+                        403 -> " Token sem permissão de escrita ou branch protegida."
+                        409 -> " Conflito de SHA; o arquivo mudou no remoto."
+                        422 -> " Payload inválido ou arquivo muito grande."
+                        else -> ""
+                    }
+                    throw IOException("GitHub commit HTTP ${response.code}: $detail.$hint")
+                }
+                val json = JSONObject(responseBody)
+                val commit = json.optJSONObject("commit")
+                CommitResult(
+                    path = path,
+                    commitSha = commit?.optString("sha").orEmpty(),
+                    htmlUrl = commit?.optString("html_url").orEmpty().ifBlank {
+                        json.optJSONObject("content")?.optString("html_url").orEmpty()
+                    },
+                    message = commitMessage
+                )
+            }
         }
     }
 
