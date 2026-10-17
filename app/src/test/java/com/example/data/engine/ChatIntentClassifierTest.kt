@@ -10,9 +10,11 @@ class ChatIntentClassifierTest {
     fun discussionQuestionsDoNotAuthorizeChanges() {
         assertEquals(ChatIntent.DISCUSSION, ChatIntentClassifier.classify("Você acha que seria melhor mudar essa arquitetura?"))
         assertEquals(ChatIntent.DISCUSSION, ChatIntentClassifier.classify("Como poderíamos melhorar esse código?"))
-        assertEquals(ChatIntent.DISCUSSION, ChatIntentClassifier.classify("Por que o projeto usa essa abordagem?"))
+        // A "por que" question asks for an explanation, not a discussion or mutation.
+        assertEquals(ChatIntent.EXPLANATION, ChatIntentClassifier.classify("Por que o projeto usa essa abordagem?"))
         assertEquals(ChatIntent.DISCUSSION, ChatIntentClassifier.classify("Você acha que devemos implementar isso?"))
         assertEquals(ChatIntent.DISCUSSION, ChatIntentClassifier.classify("Should we change this design?"))
+        assertFalse(ChatIntentClassifier.allowsMutation(ChatIntentClassifier.classify("Por que o projeto usa essa abordagem?")))
     }
 
     @Test
