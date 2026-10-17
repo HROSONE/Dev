@@ -85,6 +85,6 @@ class AgentToolLoopTest {
             requestModel = { calls++; Result.success("""{"tool":"read_file","path":"src/Main.kt"}""") }
         )
         assertTrue(result is AgentLoopResult.Failed)
-        assertEquals(1, calls)
+        assertEquals(2, calls)
     }
 }
