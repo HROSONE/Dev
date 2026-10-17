@@ -59,6 +59,18 @@ object ChatIntentClassifier {
         if (text.isBlank()) return ChatIntent.AMBIGUOUS
 
         if (preservePatterns.any { it.containsMatchIn(text) }) return ChatIntent.DISCUSSION
+
+        // Questions about whether an action is advisable are not authorization to perform it.
+        val advisoryQuestionPatterns = listOf(
+            Regex("\\b(?:voc[eê]\\s+)?acha(?:m)?\\b"),
+            Regex("\\bcomo\\s+pod[eé]r[ií]amos\\b"),
+            Regex("\\bshould\\s+we\\b"),
+            Regex("\\bdo\\s+you\\s+think\\b"),
+            Regex("\\bis\\s+it\\s+(?:better|worth)\\b")
+        )
+        if (text.endsWith("?") && advisoryQuestionPatterns.any { it.containsMatchIn(text) }) {
+            return ChatIntent.DISCUSSION
+        }
         if (planningPatterns.any { it.containsMatchIn(text) }) return ChatIntent.PLANNING
         if (explicitActionRequestPatterns.any { it.containsMatchIn(text) }) {
             return ChatIntent.IMPLEMENTATION_REQUEST
