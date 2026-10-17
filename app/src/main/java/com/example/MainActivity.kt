@@ -100,6 +100,11 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                         fontSize = 11.sp,
                         color = TextSecondary
                     )
+                    Text(
+                        text = "Privacidade: ao enviar uma pergunta, os arquivos carregados podem ser enviados ao Gemini para análise. Arquivos de ambiente, chaves e credenciais comuns são excluídos da leitura automática; revise o conteúdo antes de usar.",
+                        fontSize = 11.sp,
+                        color = AccentYellow
+                    )
                     if (uiState.repositoryStatus.isNotBlank()) {
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
