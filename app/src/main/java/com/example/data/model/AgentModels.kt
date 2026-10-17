@@ -3,12 +3,12 @@ package com.example.data.model
 enum class AgentMode(val label: String, val subtitle: String, val iconDescription: String) {
     ASK("Pergunte", "Consultas rápidas e explicações", "Modo Pergunta"),
     IMAGINE("Imagine", "Arquitetura e especificações", "Modo Especificação"),
-    BUILD("Construir", "Propostas de código com confirmação humana", "Modo Construtor")
+    BUILD("Construir", "Código com confirmação humana", "Modo Construtor")
 }
 
 enum class ReasoningSpeed(val label: String, val modelName: String, val badge: String) {
-    FAST("⚡ Rápido", "gemini-2.0-flash", "Flash Engine"),
-    DEEP_THINKING("🧠 Raciocínio Profundo", "gemini-2.5-pro-preview-05-06", "CoT Thinking")
+    FAST("⚡ Rápido", "gemini-3.8-flash", "Flash"),
+    DEEP_THINKING("🧠 Raciocínio Profundo", "gemini-3.8-flash", "Flash CoT")
 }
 
 enum class ToolType(val displayName: String, val category: String) {
@@ -16,7 +16,8 @@ enum class ToolType(val displayName: String, val category: String) {
     READ_FILE("read_file", "Workspace"),
     WRITE_FILE("write_file", "Workspace"),
     RUN_COMMAND("run_command", "Sandbox"),
-    READ_GITHUB_REPO("read_github_repo", "GitHub API")
+    READ_GITHUB_REPO("read_github_repo", "GitHub API"),
+    COMMIT_GITHUB("commit_github", "GitHub API")
 }
 
 enum class ExecutionStatus {
@@ -83,13 +84,10 @@ data class RepoFile(
     val isModified: Boolean = false
 )
 
-/**
- * Estado de uma mutação pendente de confirmação humana.
- * O conteúdo é mostrado na UI antes de qualquer escrita no workspace.
- */
 data class PendingMutation(
     val toolName: String,
     val path: String,
     val contentPreview: String,
-    val messageId: String
+    val messageId: String,
+    val diffLines: List<DiffLine> = emptyList()
 )
