@@ -36,7 +36,7 @@ object GeminiClient {
         }
 
         try {
-            val endpoint = "$BASE_URL$modelName:generateContent?key=$apiKey"
+            val endpoint = "$BASE_URL$modelName:generateContent"
             val jsonPayload = JSONObject().apply {
                 put("contents", JSONArray().apply {
                     put(JSONObject().apply {
@@ -59,6 +59,7 @@ object GeminiClient {
             val body = jsonPayload.toString().toRequestBody("application/json".toMediaType())
             val request = Request.Builder()
                 .url(endpoint)
+                .header("x-goog-api-key", apiKey)
                 .post(body)
                 .build()
 

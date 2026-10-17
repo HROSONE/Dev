@@ -2,6 +2,7 @@ package com.example.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.api.GitHubRepositoryClient
 import com.example.data.engine.AgentExecutionEvent
 import com.example.data.engine.DevAgentEngine
 import com.example.data.model.*
@@ -16,7 +17,7 @@ import java.util.UUID
 data class DevAgentUiState(
     val selectedMode: AgentMode = AgentMode.BUILD,
     val selectedSpeed: ReasoningSpeed = ReasoningSpeed.DEEP_THINKING,
-    val activeRepo: String = "octocat/modern-auth-service",
+    val activeRepo: String = "",
     val messages: List<ChatMessage> = emptyList(),
     val isThinking: Boolean = false,
     val thinkingSeconds: Double = 0.0,
@@ -24,17 +25,20 @@ data class DevAgentUiState(
     val currentPrompt: String = "",
     val activeTab: Int = 0, // 0: Chat, 1: Sandbox & Files, 2: Arquitetura
     val repoFiles: List<RepoFile> = emptyList(),
-    val selectedFile: RepoFile? = null
+    val selectedFile: RepoFile? = null,
+    val isConnectingRepo: Boolean = false,
+    val repositoryStatus: String = ""
 )
 
 class DevAgentViewModel : ViewModel() {
 
     private val engine = DevAgentEngine()
+    private val githubClient = GitHubRepositoryClient()
     private var activeJob: Job? = null
 
     private val _uiState = MutableStateFlow(
         DevAgentUiState(
-            repoFiles = createInitialRepoFiles()
+            repoFiles = emptyList()
         )
     )
     val uiState: StateFlow<DevAgentUiState> = _uiState.asStateFlow()
@@ -45,6 +49,48 @@ class DevAgentViewModel : ViewModel() {
 
     fun setMode(mode: AgentMode) {
         _uiState.update { it.copy(selectedMode = mode) }
+    }
+
+    /**
+     * Reads real repository files from GitHub. The optional token is used only for this request
+     * and is not saved in the ViewModel or persistent storage.
+     */
+    fun connectRepository(repository: String, token: String = "") {
+        if (_uiState.value.isConnectingRepo) return
+        _uiState.update {
+            it.copy(isConnectingRepo = true, repositoryStatus = "Conectando ao GitHub…")
+        }
+        viewModelScope.launch {
+            val result = githubClient.readRepository(repository, token)
+            result.fold(
+                onSuccess = { snapshot ->
+                    val files = snapshot.files.map { remote ->
+                        RepoFile(
+                            path = remote.path,
+                            language = remote.language,
+                            content = remote.content
+                        )
+                    }
+                    _uiState.update { state ->
+                        state.copy(
+                            activeRepo = snapshot.fullName,
+                            repoFiles = files,
+                            selectedFile = files.firstOrNull(),
+                            isConnectingRepo = false,
+                            repositoryStatus = "Conectado a ${snapshot.fullName} · branch ${snapshot.defaultBranch} · ${files.size} arquivos lidos"
+                        )
+                    }
+                },
+                onFailure = { error ->
+                    _uiState.update {
+                        it.copy(
+                            isConnectingRepo = false,
+                            repositoryStatus = error.message ?: "Não foi possível ler o repositório."
+                        )
+                    }
+                }
+            )
+        }
     }
 
     fun setSpeed(speed: ReasoningSpeed) {
@@ -120,7 +166,8 @@ class DevAgentViewModel : ViewModel() {
                     userPrompt = prompt,
                     mode = _uiState.value.selectedMode,
                     speed = _uiState.value.selectedSpeed,
-                    repositoryName = _uiState.value.activeRepo
+                    repositoryName = _uiState.value.activeRepo,
+                    repositoryFiles = _uiState.value.repoFiles
                 ).collect { event ->
                     when (event) {
                         is AgentExecutionEvent.ThinkingTick -> {
@@ -187,121 +234,43 @@ class DevAgentViewModel : ViewModel() {
                                         )
                                     } else msg
                                 }
-                                // If patch was applied, mark files as modified
-                                val updatedFiles = state.repoFiles.map { file ->
-                                    if (file.path.contains("rate_limit") || file.path.contains("auth.py")) {
-                                        file.copy(isModified = true)
-                                    } else file
-                                }
-
                                 state.copy(
                                     messages = updatedMessages,
-                                    isThinking = false,
-                                    repoFiles = updatedFiles
+                                    isThinking = false
                                 )
                             }
                         }
 
                         is AgentExecutionEvent.Error -> {
-                            _uiState.update { it.copy(isThinking = false) }
+                            _uiState.update { state ->
+                                state.copy(
+                                    isThinking = false,
+                                    messages = state.messages.map { msg ->
+                                        if (msg.id == agentMessageId) {
+                                            msg.copy(text = event.message, isThinking = false)
+                                        } else msg
+                                    }
+                                )
+                            }
                         }
                     }
                 }
             } catch (e: Exception) {
-                _uiState.update { it.copy(isThinking = false) }
+                _uiState.update { state ->
+                    state.copy(
+                        isThinking = false,
+                        messages = state.messages.map { msg ->
+                            if (msg.id == agentMessageId) {
+                                msg.copy(
+                                    text = "A execução foi interrompida: ${e.message ?: "erro inesperado"}. Nenhuma alteração foi confirmada.",
+                                    isThinking = false
+                                )
+                            } else msg
+                        }
+                    )
+                }
             }
         }
     }
 
-    private fun createInitialRepoFiles(): List<RepoFile> {
-        return listOf(
-            RepoFile(
-                path = "src/api/routes/auth.py",
-                language = "python",
-                content = """
-                    from fastapi import APIRouter, Depends, HTTPException, status
-                    from fastapi.security import OAuth2PasswordRequestForm
-                    from src.core.security import create_access_token, verify_password
-                    
-                    router = APIRouter(prefix="/auth", tags=["auth"])
-                    
-                    @router.post("/login")
-                    async def login(form_data: OAuth2PasswordRequestForm = Depends()):
-                        # Validação de credenciais de usuário
-                        user = authenticate_user(form_data.username, form_data.password)
-                        if not user:
-                            raise HTTPException(
-                                status_code=status.HTTP_401_UNAUTHORIZED,
-                                detail="Incorrect username or password"
-                            )
-                        token = create_access_token(data={"sub": user.username})
-                        return {"access_token": token, "token_type": "bearer"}
-                """.trimIndent()
-            ),
-            RepoFile(
-                path = "src/middleware/rate_limit.py",
-                language = "python",
-                content = """
-                    from fastapi import Request, HTTPException, status
-                    import time
-                    from collections import defaultdict
-                    
-                    class InMemoryRateLimiter:
-                        def __init__(self, requests_per_minute: int = 60):
-                            self.rate = requests_per_minute
-                            self.history = defaultdict(list)
-                            
-                        async def __call__(self, request: Request):
-                            client_ip = request.client.host
-                            now = time.time()
-                            self.history[client_ip] = [t for t in self.history[client_ip] if now - t < 60]
-                            if len(self.history[client_ip]) >= self.rate:
-                                raise HTTPException(
-                                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                                    detail="Rate limit exceeded"
-                                )
-                            self.history[client_ip].append(now)
-                """.trimIndent(),
-                isModified = true
-            ),
-            RepoFile(
-                path = "tests/test_auth.py",
-                language = "python",
-                content = """
-                    import pytest
-                    from fastapi.testclient import TestClient
-                    from src.main import app
-                    
-                    client = TestClient(app)
-                    
-                    def test_login_success():
-                        response = client.post("/auth/login", data={"username": "alice", "password": "secretpassword"})
-                        assert response.status_code == 200
-                        assert "access_token" in response.json()
-                        
-                    def test_rate_limiter_blocks_abusive_requests():
-                        for _ in range(65):
-                            res = client.post("/auth/login", data={"username": "alice", "password": "wrong"})
-                        assert res.status_code == 429
-                """.trimIndent()
-            ),
-            RepoFile(
-                path = "pyproject.toml",
-                language = "toml",
-                content = """
-                    [tool.poetry]
-                    name = "modern-auth-service"
-                    version = "0.2.0"
-                    description = "Enterprise FastApi auth service with Docker sandbox"
-                    
-                    [tool.poetry.dependencies]
-                    python = "^3.12"
-                    fastapi = "^0.115.0"
-                    uvicorn = "^0.30.0"
-                    pydantic = "^2.8.0"
-                    pytest = "^8.3.0"
-                """.trimIndent()
-            )
-        )
-    }
 }

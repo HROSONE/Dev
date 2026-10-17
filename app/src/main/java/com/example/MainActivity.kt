@@ -13,6 +13,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -44,6 +45,14 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var showRepoDialog by remember { mutableStateOf(false) }
     var repoInputText by remember { mutableStateOf(uiState.activeRepo) }
+    var githubTokenText by remember { mutableStateOf("") }
+
+    LaunchedEffect(uiState.repositoryStatus) {
+        if (uiState.repositoryStatus.startsWith("Conectado")) {
+            showRepoDialog = false
+            githubTokenText = ""
+        }
+    }
 
     if (showRepoDialog) {
         AlertDialog(
@@ -60,7 +69,9 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                     OutlinedTextField(
                         value = repoInputText,
                         onValueChange = { repoInputText = it },
+                        label = { Text("proprietário/repositório") },
                         singleLine = true,
+                        enabled = !uiState.isConnectingRepo,
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = TextPrimary,
                             unfocusedTextColor = TextPrimary,
@@ -68,16 +79,52 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                             unfocusedBorderColor = DarkBorder
                         )
                     )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = githubTokenText,
+                        onValueChange = { githubTokenText = it },
+                        label = { Text("Token GitHub (opcional para repositórios públicos)") },
+                        placeholder = { Text("ghp_… ou github_pat_…") },
+                        singleLine = true,
+                        enabled = !uiState.isConnectingRepo,
+                        visualTransformation = PasswordVisualTransformation(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = TextPrimary,
+                            unfocusedTextColor = TextPrimary,
+                            focusedBorderColor = AccentCyan,
+                            unfocusedBorderColor = DarkBorder
+                        )
+                    )
+                    Text(
+                        text = "Para repositórios privados, use um token com somente permissão de leitura de conteúdo. O token é usado em memória nesta sessão e não é salvo pelo app.",
+                        fontSize = 11.sp,
+                        color = TextSecondary
+                    )
+                    Text(
+                        text = "Privacidade: ao enviar uma pergunta, os arquivos carregados podem ser enviados ao Gemini para análise. Arquivos de ambiente, chaves e credenciais comuns são excluídos da leitura automática; revise o conteúdo antes de usar.",
+                        fontSize = 11.sp,
+                        color = AccentYellow
+                    )
+                    if (uiState.repositoryStatus.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = uiState.repositoryStatus,
+                            fontSize = 11.sp,
+                            color = if (uiState.repositoryStatus.startsWith("Conectado")) AccentGreen else TextSecondary
+                        )
+                    }
                 }
             },
             confirmButton = {
                 TextButton(
+                    enabled = !uiState.isConnectingRepo && repoInputText.isNotBlank(),
                     onClick = {
-                        // Keep updated or switch
-                        showRepoDialog = false
+                        val tokenForRequest = githubTokenText
+                        githubTokenText = ""
+                        viewModel.connectRepository(repoInputText, tokenForRequest)
                     }
                 ) {
-                    Text("Conectar", color = AccentCyan)
+                    Text(if (uiState.isConnectingRepo) "Conectando…" else "Conectar", color = AccentCyan)
                 }
             },
             dismissButton = {
