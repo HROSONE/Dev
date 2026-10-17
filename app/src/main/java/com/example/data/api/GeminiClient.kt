@@ -58,7 +58,7 @@ object GeminiClient {
 
             val body = jsonPayload.toString().toRequestBody("application/json".toMediaType())
             val request = Request.Builder()
-                    .url(endpoint)
+                .url(endpoint)
                 .header("x-goog-api-key", apiKey)
                 .post(body)
                 .build()
