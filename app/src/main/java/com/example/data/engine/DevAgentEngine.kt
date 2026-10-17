@@ -4,6 +4,7 @@ import com.example.data.api.GeminiClient
 import com.example.data.model.AgentMetrics
 import com.example.data.model.AgentMode
 import com.example.data.model.ReasoningSpeed
+import com.example.data.model.RepoFile
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 
@@ -27,7 +28,8 @@ class DevAgentEngine {
         userPrompt: String,
         mode: AgentMode,
         speed: ReasoningSpeed,
-        repositoryName: String = ""
+        repositoryName: String = "",
+        repositoryFiles: List<RepoFile> = emptyList()
     ): Flow<AgentExecutionEvent> = flow {
         val startedAt = System.currentTimeMillis()
         emit(AgentExecutionEvent.ThinkingTick(0.0))
@@ -56,12 +58,23 @@ class DevAgentEngine {
                 )
             }
             if (repositoryName.isNotBlank()) {
-                append(" O repositório selecionado pelo usuário é $repositoryName, mas isso não implica que seu conteúdo foi enviado ao modelo.")
+                append(" O repositório selecionado é $repositoryName.")
+            }
+            if (repositoryFiles.isNotEmpty()) {
+                append(" O contexto de arquivos abaixo foi lido do GitHub e está disponível para análise. Não afirme que arquivos foram modificados.")
+            } else {
+                append(" Nenhum conteúdo de arquivo do repositório está disponível no contexto desta solicitação.")
             }
         }
 
+        val repositoryContext = buildRepositoryContext(repositoryFiles)
+        val promptWithContext = if (repositoryContext.isBlank()) {
+            userPrompt
+        } else {
+            "$userPrompt\n\nCONTEXTO REAL DO REPOSITÓRIO (somente leitura):\n$repositoryContext"
+        }
         val result = GeminiClient.queryGemini(
-            prompt = userPrompt,
+            prompt = promptWithContext,
             modelName = speed.modelName,
             systemInstruction = systemPrompt
         )
@@ -93,4 +106,20 @@ class DevAgentEngine {
             }
         )
     }
+    private fun buildRepositoryContext(files: List<RepoFile>): String {
+        if (files.isEmpty()) return ""
+        val maxContextChars = 60_000
+        val maxPerFileChars = 10_000
+        val output = StringBuilder()
+        for (file in files) {
+            if (output.length >= maxContextChars) break
+            val remaining = maxContextChars - output.length
+            val content = file.content.take(minOf(maxPerFileChars, remaining))
+            if (content.isBlank()) continue
+            output.append("\n--- FILE: ").append(file.path).append(" ---\n")
+            output.append(content).append("\n")
+        }
+        return output.toString().take(maxContextChars)
+    }
+
 }
