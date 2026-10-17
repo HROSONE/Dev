@@ -60,7 +60,7 @@ class DevAgentEngine(
                     "em um destes formatos: {\"tool\":\"list_files\",\"path\":\".\"}; " +
                     "{\"tool\":\"read_file\",\"path\":\"caminho/relativo\"}; " +
                     "{\"tool\":\"write_file\",\"path\":\"caminho/relativo\",\"content\":\"conteúdo\"}. " +
-                    "Use caminhos relativos dentro do workspace do aplicativo. Comandos permitidos: pwd, ls e cat; solicite-os com {\\"tool\\":\\"run_command\\",\\"command\\":\\"pwd\\"}. Não use shell, pipes ou encadeamento. " +
+                    "Use caminhos relativos dentro do workspace do aplicativo. Comandos permitidos: pwd, ls e cat; para executá-los, solicite a ferramenta run_command com o campo command contendo um único comando permitido. Não use shell, pipes ou encadeamento. " +
                     "Se não precisar de ferramenta, responda em texto normal. Ferramentas de escrita exigem confirmação humana e, neste momento, não serão aplicadas pela interface. "
             )
             when (mode) {
