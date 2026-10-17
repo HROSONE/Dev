@@ -89,7 +89,7 @@ class DevAgentEngine {
                         metrics = AgentMetrics(
                             thinkingSeconds = elapsedSeconds,
                             commandsExecuted = 0,
-                            filesInspected = 0,
+                            filesInspected = repositoryFiles.size,
                             linesChanged = 0,
                             sandboxLatencyMs = 0
                         )
