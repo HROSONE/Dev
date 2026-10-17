@@ -13,10 +13,11 @@ import java.util.concurrent.TimeUnit
 
 object GeminiClient {
     private const val BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/"
+    const val DEFAULT_MODEL = "gemini-3.8-flash"
 
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(60, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
         .build()
 
@@ -27,12 +28,14 @@ object GeminiClient {
 
     suspend fun queryGemini(
         prompt: String,
-        modelName: String = "gemini-3.5-flash",
+        modelName: String = DEFAULT_MODEL,
         systemInstruction: String = "Você é um Engenheiro de Software Sênior especialista em IA e Agentes Autônomos de Código."
     ): Result<String> = withContext(Dispatchers.IO) {
         val apiKey = BuildConfig.GEMINI_API_KEY
         if (!isApiKeyConfigured()) {
-            return@withContext Result.failure(IllegalStateException("API key not configured"))
+            return@withContext Result.failure(
+                IllegalStateException("GEMINI_API_KEY não configurada. Defina no .env ou no painel de Secrets.")
+            )
         }
 
         try {
@@ -64,11 +67,26 @@ object GeminiClient {
                 .build()
 
             val response = okHttpClient.newCall(request).execute()
+            val responseBody = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                return@withContext Result.failure(Exception("HTTP ${response.code}: ${response.message}"))
+                val detail = try {
+                    JSONObject(responseBody).optJSONObject("error")?.optString("message")
+                        ?: response.message
+                } catch (_: Exception) {
+                    response.message
+                }
+                val hint = when (response.code) {
+                    400 -> " Verifique o nome do modelo ($modelName) e o formato do prompt."
+                    401, 403 -> " Chave de API inválida ou sem permissão."
+                    404 -> " Modelo '$modelName' não encontrado. Confirme se gemini-3.8-flash está disponível na sua conta."
+                    429 -> " Limite de requisições atingido; tente novamente em instantes."
+                    else -> ""
+                }
+                return@withContext Result.failure(
+                    Exception("Gemini HTTP ${response.code}: $detail.$hint")
+                )
             }
 
-            val responseBody = response.body?.string().orEmpty()
             val parsedJson = JSONObject(responseBody)
             val candidates = parsedJson.optJSONArray("candidates")
             val firstCandidate = candidates?.optJSONObject(0)
@@ -79,7 +97,11 @@ object GeminiClient {
             if (text != null && text.isNotEmpty()) {
                 Result.success(text)
             } else {
-                Result.failure(Exception("Empty text in response"))
+                val blockReason = firstCandidate?.optJSONObject("finishReason")
+                    ?: parsedJson.optJSONObject("promptFeedback")?.optString("blockReason")
+                Result.failure(
+                    Exception("Resposta vazia do modelo ($modelName). Motivo: ${blockReason ?: "desconhecido"}")
+                )
             }
         } catch (e: Exception) {
             Result.failure(e)
