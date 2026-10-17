@@ -148,7 +148,7 @@ fun AgentModeSelector(
                 )
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(
-                    text = activeRepo,
+                    text = activeRepo.ifBlank { "Nenhum repositório conectado" },
                     fontSize = 11.sp,
                     color = TextPrimary,
                     maxLines = 1,
