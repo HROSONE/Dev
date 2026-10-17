@@ -157,6 +157,11 @@ class GitHubRepositoryClient(
         val parts = path.lowercase().split("/")
         val name = parts.lastOrNull().orEmpty()
         val sensitiveName = name == ".env" ||
+            name == "local.properties" ||
+            name.contains("token") ||
+            name.contains("password") ||
+            name.contains("api_key") ||
+            name.contains("apikey") ||
             name.startsWith(".env.") ||
             name.contains("secret") ||
             name.contains("credential") ||
