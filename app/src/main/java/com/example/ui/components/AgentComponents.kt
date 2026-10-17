@@ -216,20 +216,20 @@ fun LiveStatusIndicator(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .clip(RoundedCornerShape(12.dp))
-                .background(AccentGreen.copy(alpha = 0.12f))
+                .background((if (activeRepo.isBlank()) AccentYellow else AccentGreen).copy(alpha = 0.12f))
                 .padding(horizontal = 8.dp, vertical = 3.dp)
         ) {
             Box(
                 modifier = Modifier
                     .size(6.dp)
                     .clip(CircleShape)
-                    .background(AccentGreen)
+                    .background(if (activeRepo.isBlank()) AccentYellow else AccentGreen)
             )
             Spacer(modifier = Modifier.width(5.dp))
             Text(
-                text = "GitHub Ativo",
+                text = if (activeRepo.isBlank()) "GitHub desconectado" else "GitHub conectado",
                 fontSize = 11.sp,
-                color = AccentGreen,
+                color = if (activeRepo.isBlank()) AccentYellow else AccentGreen,
                 fontWeight = FontWeight.Medium
             )
         }
@@ -250,9 +250,9 @@ fun LiveStatusIndicator(
             )
             Spacer(modifier = Modifier.width(4.dp))
             Text(
-                text = "Docker Sandbox",
+                text = "Terminal não conectado",
                 fontSize = 11.sp,
-                color = AccentCyan
+                color = AccentYellow
             )
         }
 
