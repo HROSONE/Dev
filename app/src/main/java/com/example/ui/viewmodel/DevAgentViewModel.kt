@@ -2,6 +2,7 @@ package com.example.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.api.GitHubRepositoryClient
 import com.example.data.engine.AgentExecutionEvent
 import com.example.data.engine.DevAgentEngine
 import com.example.data.model.*
@@ -24,12 +25,15 @@ data class DevAgentUiState(
     val currentPrompt: String = "",
     val activeTab: Int = 0, // 0: Chat, 1: Sandbox & Files, 2: Arquitetura
     val repoFiles: List<RepoFile> = emptyList(),
-    val selectedFile: RepoFile? = null
+    val selectedFile: RepoFile? = null,
+    val isConnectingRepo: Boolean = false,
+    val repositoryStatus: String = ""
 )
 
 class DevAgentViewModel : ViewModel() {
 
     private val engine = DevAgentEngine()
+    private val githubClient = GitHubRepositoryClient()
     private var activeJob: Job? = null
 
     private val _uiState = MutableStateFlow(
@@ -45,6 +49,48 @@ class DevAgentViewModel : ViewModel() {
 
     fun setMode(mode: AgentMode) {
         _uiState.update { it.copy(selectedMode = mode) }
+    }
+
+    /**
+     * Reads real repository files from GitHub. The optional token is used only for this request
+     * and is not saved in the ViewModel or persistent storage.
+     */
+    fun connectRepository(repository: String, token: String = "") {
+        if (_uiState.value.isConnectingRepo) return
+        _uiState.update {
+            it.copy(isConnectingRepo = true, repositoryStatus = "Conectando ao GitHub…")
+        }
+        viewModelScope.launch {
+            val result = githubClient.readRepository(repository, token)
+            result.fold(
+                onSuccess = { snapshot ->
+                    val files = snapshot.files.map { remote ->
+                        RepoFile(
+                            path = remote.path,
+                            language = remote.language,
+                            content = remote.content
+                        )
+                    }
+                    _uiState.update { state ->
+                        state.copy(
+                            activeRepo = snapshot.fullName,
+                            repoFiles = files,
+                            selectedFile = files.firstOrNull(),
+                            isConnectingRepo = false,
+                            repositoryStatus = "Conectado a ${snapshot.fullName} · branch ${snapshot.defaultBranch} · ${files.size} arquivos lidos"
+                        )
+                    }
+                },
+                onFailure = { error ->
+                    _uiState.update {
+                        it.copy(
+                            isConnectingRepo = false,
+                            repositoryStatus = error.message ?: "Não foi possível ler o repositório."
+                        )
+                    }
+                }
+            )
+        }
     }
 
     fun setSpeed(speed: ReasoningSpeed) {
