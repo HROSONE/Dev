@@ -2,34 +2,38 @@ package com.example.data.api
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.example.data.model.LlmProvider
 
 /**
- * Guarda a chave Gemini no app (SharedPreferences privado).
- * Prioridade: chave salva pelo usuário > BuildConfig (build-time).
+ * Segredos e preferências de LLM (SharedPreferences privado).
  */
 class ApiKeyStore(context: Context) {
 
     private val prefs: SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    fun getUserKey(): String =
+    // --- Gemini ---
+    fun getGeminiKey(): String =
         prefs.getString(KEY_GEMINI, "").orEmpty().trim()
 
-    fun setUserKey(key: String) {
+    fun setGeminiKey(key: String) {
         prefs.edit().putString(KEY_GEMINI, key.trim()).apply()
     }
 
-    fun clearUserKey() {
+    fun clearGeminiKey() {
         prefs.edit().remove(KEY_GEMINI).apply()
     }
 
-    fun hasUserKey(): Boolean = getUserKey().isNotBlank()
+    /** @deprecated use getGeminiKey */
+    fun getUserKey(): String = getGeminiKey()
 
-    /**
-     * Chave efetiva: preferência do usuário, senão BuildConfig se válida.
-     */
+    /** @deprecated use setGeminiKey */
+    fun setUserKey(key: String) = setGeminiKey(key)
+
+    fun clearUserKey() = clearGeminiKey()
+
     fun resolveGeminiKey(): String {
-        val user = getUserKey()
+        val user = getGeminiKey()
         if (user.isNotBlank()) return user
         return try {
             val build = com.example.BuildConfig.GEMINI_API_KEY.orEmpty().trim()
@@ -39,10 +43,51 @@ class ApiKeyStore(context: Context) {
         }
     }
 
-    fun isConfigured(): Boolean = resolveGeminiKey().isNotBlank()
+    // --- OpenRouter ---
+    fun getOpenRouterKey(): String =
+        prefs.getString(KEY_OPENROUTER, "").orEmpty().trim()
+
+    fun setOpenRouterKey(key: String) {
+        prefs.edit().putString(KEY_OPENROUTER, key.trim()).apply()
+    }
+
+    fun clearOpenRouterKey() {
+        prefs.edit().remove(KEY_OPENROUTER).apply()
+    }
+
+    // --- Provider / model ---
+    fun getProvider(): LlmProvider {
+        val raw = prefs.getString(KEY_PROVIDER, LlmProvider.GEMINI.name) ?: LlmProvider.GEMINI.name
+        return runCatching { LlmProvider.valueOf(raw) }.getOrDefault(LlmProvider.GEMINI)
+    }
+
+    fun setProvider(provider: LlmProvider) {
+        prefs.edit().putString(KEY_PROVIDER, provider.name).apply()
+    }
+
+    fun getOpenRouterModelId(): String =
+        prefs.getString(KEY_OR_MODEL, LlmProvider.DEFAULT_OPENROUTER_MODEL)
+            .orEmpty()
+            .ifBlank { LlmProvider.DEFAULT_OPENROUTER_MODEL }
+
+    fun setOpenRouterModelId(modelId: String) {
+        prefs.edit().putString(KEY_OR_MODEL, modelId.trim()).apply()
+    }
+
+    fun isGeminiConfigured(): Boolean = resolveGeminiKey().isNotBlank()
+
+    fun isOpenRouterConfigured(): Boolean = getOpenRouterKey().isNotBlank()
+
+    fun isConfigured(): Boolean = when (getProvider()) {
+        LlmProvider.GEMINI -> isGeminiConfigured()
+        LlmProvider.OPENROUTER -> isOpenRouterConfigured()
+    }
 
     companion object {
         private const val PREFS_NAME = "devagent_secrets"
         private const val KEY_GEMINI = "gemini_api_key"
+        private const val KEY_OPENROUTER = "openrouter_api_key"
+        private const val KEY_PROVIDER = "llm_provider"
+        private const val KEY_OR_MODEL = "openrouter_model_id"
     }
 }
