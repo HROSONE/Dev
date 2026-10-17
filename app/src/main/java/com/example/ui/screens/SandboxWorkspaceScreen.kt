@@ -72,7 +72,7 @@ fun SandboxWorkspaceScreen(
                 Spacer(modifier = Modifier.width(8.dp))
                 Column {
                     Text(
-                        text = "Sandbox Isolada & Repositório",
+                        text = "Repositório & Terminal (prévia)",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         color = TextPrimary
@@ -278,7 +278,7 @@ fun SandboxWorkspaceScreen(
                                 if (terminalInput.isNotBlank()) {
                                     val cmd = terminalInput.trim()
                                     val output = "Terminal real ainda não conectado. Nenhum comando foi executado."
-                                    terminalLogs = terminalLogs + listOf("root@sandbox:/workspace# $cmd", output)
+                                    terminalLogs = terminalLogs + listOf("> $cmd", output)
                                     terminalInput = ""
                                 }
                             }),
