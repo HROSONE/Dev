@@ -1,4 +1,4 @@
-name: Android checks (no APK packaging)
+name: Android CI
 
 on:
   pull_request:
