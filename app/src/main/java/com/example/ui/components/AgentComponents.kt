@@ -42,7 +42,6 @@ fun AgentModeSelector(
             .background(DarkSurface)
             .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
-        // Mode Tabs (Pergunte, Imagine, Construir)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -97,13 +96,11 @@ fun AgentModeSelector(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Speed Selector & Repo Tag
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Speed Switch
             Row(
                 modifier = Modifier
                     .clip(RoundedCornerShape(8.dp))
@@ -131,7 +128,6 @@ fun AgentModeSelector(
                 }
             }
 
-            // Repository Badge
             Row(
                 modifier = Modifier
                     .clip(RoundedCornerShape(8.dp))
@@ -187,7 +183,6 @@ fun LiveStatusIndicator(
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         if (isThinking) {
-            // Thinking timer
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
@@ -211,7 +206,6 @@ fun LiveStatusIndicator(
             }
         }
 
-        // GitHub Connector Pill
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
@@ -234,7 +228,6 @@ fun LiveStatusIndicator(
             )
         }
 
-        // Docker Sandbox Pill
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
@@ -250,9 +243,9 @@ fun LiveStatusIndicator(
             )
             Spacer(modifier = Modifier.width(4.dp))
             Text(
-                text = "Terminal não conectado",
+                text = "Workspace local",
                 fontSize = 11.sp,
-                color = AccentYellow
+                color = AccentCyan
             )
         }
 
@@ -360,7 +353,6 @@ fun ToolExecutionCard(
         border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(DarkBorder))
     ) {
         Column(modifier = Modifier.padding(10.dp)) {
-            // Header
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -373,16 +365,18 @@ fun ToolExecutionCard(
                     modifier = Modifier.weight(1f)
                 ) {
                     val icon = when (tool.type) {
-                        ToolType.READ_GITHUB_REPO -> Icons.Default.FolderOpen
-                        ToolType.RUN_TERMINAL_COMMAND -> Icons.Default.Terminal
-                        ToolType.APPLY_DIFF_PATCH -> Icons.Default.Difference
-                        ToolType.RUN_TESTS -> Icons.AutoMirrored.Filled.FactCheck
+                        ToolType.LIST_FILES -> Icons.Default.FolderOpen
+                        ToolType.READ_FILE -> Icons.Default.Description
+                        ToolType.WRITE_FILE -> Icons.Default.Edit
+                        ToolType.RUN_COMMAND -> Icons.Default.Terminal
+                        ToolType.READ_GITHUB_REPO -> Icons.Default.CloudDownload
                     }
                     val iconColor = when (tool.type) {
-                        ToolType.READ_GITHUB_REPO -> AccentBlue
-                        ToolType.RUN_TERMINAL_COMMAND -> AccentCyan
-                        ToolType.APPLY_DIFF_PATCH -> AccentYellow
-                        ToolType.RUN_TESTS -> AccentGreen
+                        ToolType.LIST_FILES -> AccentBlue
+                        ToolType.READ_FILE -> AccentCyan
+                        ToolType.WRITE_FILE -> AccentYellow
+                        ToolType.RUN_COMMAND -> AccentGreen
+                        ToolType.READ_GITHUB_REPO -> AccentPurple
                     }
 
                     Icon(
@@ -411,7 +405,6 @@ fun ToolExecutionCard(
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    // Status Badge
                     when (tool.status) {
                         ExecutionStatus.RUNNING -> {
                             CircularProgressIndicator(
@@ -445,6 +438,9 @@ fun ToolExecutionCard(
                         ExecutionStatus.PENDING -> {
                             Text(text = "Pendente", fontSize = 10.sp, color = TextMuted)
                         }
+                        ExecutionStatus.AWAITING_CONFIRMATION -> {
+                            Text(text = "Aguardando", fontSize = 10.sp, color = AccentYellow)
+                        }
                     }
                     Spacer(modifier = Modifier.width(4.dp))
                     Icon(
@@ -456,7 +452,6 @@ fun ToolExecutionCard(
                 }
             }
 
-            // Expanded content
             AnimatedVisibility(visible = tool.isExpanded) {
                 Column(
                     modifier = Modifier
@@ -480,15 +475,15 @@ fun TerminalConsoleBox(text: String, modifier: Modifier = Modifier) {
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(6.dp))
-            .background(TerminalBackground)
+            .background(Color(0xFF0D1117))
             .border(1.dp, DarkBorder, RoundedCornerShape(6.dp))
             .padding(8.dp)
     ) {
         Text(
             text = text,
-            fontFamily = FontFamily.Monospace,
             fontSize = 11.sp,
-            color = TextPrimary,
+            fontFamily = FontFamily.Monospace,
+            color = Color(0xFF7EE787),
             lineHeight = 15.sp
         )
     }
@@ -500,37 +495,33 @@ fun DiffView(lines: List<DiffLine>, modifier: Modifier = Modifier) {
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(6.dp))
-            .background(TerminalBackground)
+            .background(Color(0xFF0D1117))
             .border(1.dp, DarkBorder, RoundedCornerShape(6.dp))
-            .padding(4.dp)
+            .padding(6.dp)
     ) {
         lines.forEach { line ->
             val bg = when (line.type) {
-                DiffLineType.ADDED -> DiffAddedBg
-                DiffLineType.REMOVED -> DiffRemovedBg
-                DiffLineType.HEADER -> DarkSurfaceVariant
+                DiffLineType.ADDED -> Color(0xFF1B4332)
+                DiffLineType.REMOVED -> Color(0xFF3D0C11)
+                DiffLineType.HEADER -> Color(0xFF161B22)
                 DiffLineType.CONTEXT -> Color.Transparent
             }
-            val textColor = when (line.type) {
-                DiffLineType.ADDED -> DiffAddedText
-                DiffLineType.REMOVED -> DiffRemovedText
+            val fg = when (line.type) {
+                DiffLineType.ADDED -> Color(0xFF7EE787)
+                DiffLineType.REMOVED -> Color(0xFFFF7B72)
                 DiffLineType.HEADER -> AccentCyan
                 DiffLineType.CONTEXT -> TextSecondary
             }
-
-            Row(
+            Text(
+                text = line.text,
+                fontSize = 10.sp,
+                fontFamily = FontFamily.Monospace,
+                color = fg,
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(bg)
-                    .padding(horizontal = 6.dp, vertical = 2.dp)
-            ) {
-                Text(
-                    text = line.text,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                    color = textColor
-                )
-            }
+                    .padding(horizontal = 4.dp, vertical = 1.dp)
+            )
         }
     }
 }
