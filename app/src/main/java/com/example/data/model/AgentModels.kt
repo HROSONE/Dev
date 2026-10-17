@@ -3,26 +3,28 @@ package com.example.data.model
 enum class AgentMode(val label: String, val subtitle: String, val iconDescription: String) {
     ASK("Pergunte", "Consultas rápidas e explicações", "Modo Pergunta"),
     IMAGINE("Imagine", "Arquitetura e especificações", "Modo Especificação"),
-    BUILD("Construir", "Propostas de código; execução em desenvolvimento", "Modo Construtor")
+    BUILD("Construir", "Propostas de código com confirmação humana", "Modo Construtor")
 }
 
 enum class ReasoningSpeed(val label: String, val modelName: String, val badge: String) {
-    FAST("⚡ Rápido", "gemini-3.5-flash", "Flash Engine"),
-    DEEP_THINKING("🧠 Raciocínio Profundo", "gemini-3.1-pro-preview", "CoT Thinking")
+    FAST("⚡ Rápido", "gemini-2.0-flash", "Flash Engine"),
+    DEEP_THINKING("🧠 Raciocínio Profundo", "gemini-2.5-pro-preview-05-06", "CoT Thinking")
 }
 
 enum class ToolType(val displayName: String, val category: String) {
-    READ_GITHUB_REPO("read_github_repo", "GitHub API"),
-    RUN_TERMINAL_COMMAND("run_terminal_command", "Docker Sandbox"),
-    APPLY_DIFF_PATCH("apply_diff_patch", "Git Engine"),
-    RUN_TESTS("run_test_suite", "Test Runner")
+    LIST_FILES("list_files", "Workspace"),
+    READ_FILE("read_file", "Workspace"),
+    WRITE_FILE("write_file", "Workspace"),
+    RUN_COMMAND("run_command", "Sandbox"),
+    READ_GITHUB_REPO("read_github_repo", "GitHub API")
 }
 
 enum class ExecutionStatus {
     PENDING,
     RUNNING,
     SUCCESS,
-    FAILED
+    FAILED,
+    AWAITING_CONFIRMATION
 }
 
 data class DiffLine(
@@ -79,4 +81,15 @@ data class RepoFile(
     val language: String,
     val content: String,
     val isModified: Boolean = false
+)
+
+/**
+ * Estado de uma mutação pendente de confirmação humana.
+ * O conteúdo é mostrado na UI antes de qualquer escrita no workspace.
+ */
+data class PendingMutation(
+    val toolName: String,
+    val path: String,
+    val contentPreview: String,
+    val messageId: String
 )
