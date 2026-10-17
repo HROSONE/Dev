@@ -233,9 +233,20 @@ fun ChatMessageItem(
                 Spacer(modifier = Modifier.height(8.dp))
                 HorizontalDivider(color = DarkBorder, thickness = 0.5.dp)
                 Spacer(modifier = Modifier.height(6.dp))
-                Row(Modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("⚡ ${metrics.thinkingSeconds}s · ${metrics.filesInspected} arquivos", fontSize = 10.sp, color = TextMuted)
-                    Text("Δ ${metrics.linesChanged} · ${metrics.commandsExecuted} tools", fontSize = 10.sp, color = AccentGreen)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        "⚡ ${metrics.thinkingSeconds}s · ${metrics.filesInspected} arquivos",
+                        fontSize = 10.sp,
+                        color = TextMuted
+                    )
+                    Text(
+                        "Δ ${metrics.linesChanged} · ${metrics.commandsExecuted} tools",
+                        fontSize = 10.sp,
+                        color = AccentGreen
+                    )
                 }
             }
         }
@@ -259,7 +270,7 @@ fun EmptyAgentState(onSelectPreset: (String) -> Unit, modifier: Modifier = Modif
         Text("DevAgent", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
         Spacer(modifier = Modifier.height(6.dp))
         Text(
-            text = "Gemini 3.8 Flash · GitHub (leitura/commit) · workspace local isolado · confirmação humana antes de gravar.",
+            text = "Gemini / OpenRouter · GitHub · workspace local · confirmação antes de gravar.",
             fontSize = 12.sp,
             color = TextSecondary,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
