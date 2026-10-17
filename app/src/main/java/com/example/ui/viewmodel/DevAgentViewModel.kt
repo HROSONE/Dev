@@ -12,6 +12,8 @@ import com.example.data.engine.AgentExecutionEvent
 import com.example.data.engine.DevAgentEngine
 import com.example.data.engine.WorkspaceCommandRunner
 import com.example.data.model.*
+import com.example.data.update.AppUpdateChecker
+import com.example.data.update.AppUpdateInfo
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -50,7 +52,11 @@ data class DevAgentUiState(
     val llmProvider: LlmProvider = LlmProvider.GEMINI,
     val openRouterModelId: String = LlmProvider.DEFAULT_OPENROUTER_MODEL,
     val llmStatusLabel: String = "",
-    val apiKeyStatus: String = ""
+    val apiKeyStatus: String = "",
+    val updateAvailable: AppUpdateInfo? = null,
+    val updateStatus: String = "",
+    val isCheckingUpdate: Boolean = false,
+    val isDownloadingUpdate: Boolean = false
 )
 
 class DevAgentViewModel(application: Application) : AndroidViewModel(application) {
@@ -60,6 +66,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
     private val githubClient = GitHubRepositoryClient()
     private val commandRunner by lazy { WorkspaceCommandRunner(workspaceDir) }
     private val apiKeyStore = ApiKeyStore(application)
+    private val updateChecker = AppUpdateChecker()
     private var activeJob: Job? = null
 
     private var sessionToken: String = ""
@@ -71,6 +78,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
 
     init {
         applyStoredLlmConfig()
+        checkForAppUpdate()
     }
 
     private fun applyStoredLlmConfig() {
@@ -123,6 +131,67 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                 hasLlmKey = LlmGateway.isConfigured(),
                 llmStatusLabel = LlmGateway.statusLabel(),
                 apiKeyStatus = "Salvo · ${LlmGateway.statusLabel()}"
+            )
+        }
+    }
+
+    fun checkForAppUpdate() {
+        if (_uiState.value.isCheckingUpdate) return
+        _uiState.update { it.copy(isCheckingUpdate = true, updateStatus = "Procurando atualização…") }
+        viewModelScope.launch {
+            updateChecker.checkForUpdate().fold(
+                onSuccess = { info ->
+                    _uiState.update {
+                        it.copy(
+                            isCheckingUpdate = false,
+                            updateAvailable = info,
+                            updateStatus = if (info == null) "App atualizado."
+                            else "Nova versão ${info.versionName} disponível"
+                        )
+                    }
+                },
+                onFailure = { e ->
+                    _uiState.update {
+                        it.copy(isCheckingUpdate = false, updateStatus = "Falha ao checar: ${e.message}")
+                    }
+                }
+            )
+        }
+    }
+
+    fun downloadAndInstallUpdate() {
+        val info = _uiState.value.updateAvailable ?: return
+        val app = getApplication<Application>()
+        if (!updateChecker.canRequestPackageInstalls(app)) {
+            _uiState.update {
+                it.copy(updateStatus = "Permita instalar apps desconhecidos e tente de novo.")
+            }
+            try {
+                app.startActivity(updateChecker.installPermissionSettingsIntent(app))
+            } catch (_: Exception) {
+            }
+            return
+        }
+        _uiState.update { it.copy(isDownloadingUpdate = true, updateStatus = "Baixando APK…") }
+        viewModelScope.launch {
+            updateChecker.downloadApk(app, info.apkUrl).fold(
+                onSuccess = { file ->
+                    _uiState.update {
+                        it.copy(isDownloadingUpdate = false, updateStatus = "Abrindo instalador…")
+                    }
+                    try {
+                        app.startActivity(updateChecker.installApk(app, file))
+                    } catch (e: Exception) {
+                        _uiState.update {
+                            it.copy(updateStatus = "Não foi possível abrir instalador: ${e.message}")
+                        }
+                    }
+                },
+                onFailure = { e ->
+                    _uiState.update {
+                        it.copy(isDownloadingUpdate = false, updateStatus = "Download falhou: ${e.message}")
+                    }
+                }
             )
         }
     }
@@ -448,17 +517,22 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                     val relative = file.relativeTo(workspaceDir).invariantSeparatorsPath
                     try {
                         RepoFile(relative, languageFor(relative), file.readText().take(50_000), isModified = true)
-                    } catch (_: Exception) { null }
+                    } catch (_: Exception) {
+                        null
+                    }
                 }.sortedBy { it.path }.toList()
                 if (files.isNotEmpty()) {
                     _uiState.update { s ->
                         s.copy(
                             repoFiles = files,
-                            selectedFile = s.selectedFile?.let { sel -> files.find { it.path == sel.path } } ?: files.firstOrNull()
+                            selectedFile = s.selectedFile?.let { sel ->
+                                files.find { it.path == sel.path }
+                            } ?: files.firstOrNull()
                         )
                     }
                 }
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
         }
     }
 
