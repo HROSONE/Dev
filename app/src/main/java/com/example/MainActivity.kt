@@ -324,35 +324,99 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
     Scaffold(
         modifier = Modifier.fillMaxSize().background(DarkBackground),
         topBar = {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .background(DarkBackground)
-                    .padding(end = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                AgentModeSelector(
-                    selectedMode = uiState.selectedMode,
-                    onModeSelected = { viewModel.setMode(it) },
-                    selectedSpeed = uiState.selectedSpeed,
-                    onSpeedSelected = { viewModel.setSpeed(it) },
-                    activeRepo = uiState.activeRepo,
-                    onSelectRepoClick = {
-                        repoInputText = uiState.activeRepo
-                        showRepoDialog = true
-                    },
-                    modifier = Modifier.weight(1f)
-                )
-                IconButton(
-                    onClick = { showSettingsDialog = true },
-                    modifier = Modifier.testTag("open_settings_button")
+            Column(Modifier.fillMaxWidth().background(DarkBackground)) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(end = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        Icons.Default.Settings,
-                        "Configurações",
-                        tint = if (uiState.hasLlmKey) TextSecondary else AccentYellow,
-                        modifier = Modifier.size(20.dp)
+                    AgentModeSelector(
+                        selectedMode = uiState.selectedMode,
+                        onModeSelected = { viewModel.setMode(it) },
+                        selectedSpeed = uiState.selectedSpeed,
+                        onSpeedSelected = { viewModel.setSpeed(it) },
+                        activeRepo = uiState.activeRepo,
+                        onSelectRepoClick = {
+                            repoInputText = uiState.activeRepo
+                            showRepoDialog = true
+                        },
+                        modifier = Modifier.weight(1f)
                     )
+                    IconButton(
+                        onClick = { showSettingsDialog = true },
+                        modifier = Modifier.testTag("open_settings_button")
+                    ) {
+                        Icon(
+                            Icons.Default.Settings,
+                            "Configurações",
+                            tint = if (uiState.hasLlmKey) TextSecondary else AccentYellow,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                val showBanner = uiState.updateAvailable != null && !uiState.updateBannerDismissed
+                if (showBanner) {
+                    val upd = uiState.updateAvailable!!
+                    Surface(
+                        color = AccentCyan.copy(alpha = 0.12f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "Nova versão ${upd.versionName}",
+                                    fontSize = 13.sp,
+                                    color = TextPrimary
+                                )
+                                Text(
+                                    when {
+                                        uiState.isDownloadingUpdate ->
+                                            "Baixando… ${(uiState.updateDownloadProgress * 100).toInt()}%"
+                                        uiState.updateApkReady -> "Pronta para instalar"
+                                        else -> "Atualização disponível"
+                                    },
+                                    fontSize = 11.sp,
+                                    color = TextSecondary
+                                )
+                                if (uiState.isDownloadingUpdate) {
+                                    LinearProgressIndicator(
+                                        progress = { uiState.updateDownloadProgress },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(top = 4.dp),
+                                        color = AccentCyan,
+                                        trackColor = DarkBorder
+                                    )
+                                }
+                            }
+                            TextButton(
+                                onClick = { viewModel.downloadAndInstallUpdate() },
+                                enabled = !uiState.isCheckingUpdate
+                            ) {
+                                Text(
+                                    if (uiState.updateApkReady || !uiState.isDownloadingUpdate)
+                                        "Instalar" else "…",
+                                    color = AccentGreen,
+                                    fontSize = 13.sp
+                                )
+                            }
+                            IconButton(onClick = { viewModel.dismissUpdateBanner() }) {
+                                Icon(
+                                    Icons.Default.Close,
+                                    "Fechar",
+                                    tint = TextMuted,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
                 }
             }
         },
