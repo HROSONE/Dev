@@ -31,10 +31,7 @@ jobs:
       - name: Create .env
         run: |
           if [ ! -f .env ]; then
-            cp .env.example .env 2>/dev/null || true
-            if [ ! -f .env ]; then
-              printf 'GEMINI_API_KEY=MY_GEMINI_API_KEY\n' > .env
-            fi
+            cp .env.example .env 2>/dev/null || printf 'GEMINI_API_KEY=MY_GEMINI_API_KEY\n' > .env
           fi
 
       - name: Debug keystore
@@ -58,14 +55,16 @@ jobs:
             -PversionName=$NAME \
             --stacktrace
 
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: DevAgent-debug
-          path: app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
+      - name: Rename APK
+        run: |
+          mkdir -p dist
+          APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+          cp "$APK" "dist/DevAgent-1.1.${{ github.run_number }}.apk"
+          ls -la dist/
 
-      - name: Publish GitHub Release
+      # NÃO usa actions/upload-artifact (quota do account estourada).
+      # Publica direto na Release do GitHub.
+      - name: Publish GitHub Release with APK
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.1.${{ github.run_number }}
@@ -76,8 +75,10 @@ jobs:
             - versionCode=${{ github.run_number }}
             - versionName=1.1.${{ github.run_number }}
 
-            Baixe o APK e instale (permita fontes desconhecidas para este app).
-          files: app/build/outputs/apk/debug/*.apk
+            Baixe **DevAgent-1.1.${{ github.run_number }}.apk** e instale no celular
+            (permita instalar apps desta fonte se o Android pedir).
+          files: dist/DevAgent-1.1.${{ github.run_number }}.apk
           generate_release_notes: true
+          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
