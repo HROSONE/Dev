@@ -1,6 +1,5 @@
 package com.example.data.api
 
-import com.example.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -15,15 +14,32 @@ object GeminiClient {
     private const val BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/"
     const val DEFAULT_MODEL = "gemini-3.8-flash"
 
+    @Volatile
+    private var runtimeApiKey: String = ""
+
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(60, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
         .build()
 
+    /** Define a chave usada nas próximas chamadas (vinda das Configurações). */
+    fun setApiKey(key: String) {
+        runtimeApiKey = key.trim()
+    }
+
     fun isApiKeyConfigured(): Boolean {
-        val key = BuildConfig.GEMINI_API_KEY
-        return !key.isNullOrBlank() && key != "MY_GEMINI_API_KEY"
+        val key = effectiveApiKey()
+        return key.isNotBlank() && key != "MY_GEMINI_API_KEY"
+    }
+
+    private fun effectiveApiKey(): String {
+        if (runtimeApiKey.isNotBlank()) return runtimeApiKey
+        return try {
+            com.example.BuildConfig.GEMINI_API_KEY.orEmpty().trim()
+        } catch (_: Exception) {
+            ""
+        }
     }
 
     suspend fun queryGemini(
@@ -31,10 +47,12 @@ object GeminiClient {
         modelName: String = DEFAULT_MODEL,
         systemInstruction: String = "Você é um Engenheiro de Software Sênior especialista em IA e Agentes Autônomos de Código."
     ): Result<String> = withContext(Dispatchers.IO) {
-        val apiKey = BuildConfig.GEMINI_API_KEY
-        if (!isApiKeyConfigured()) {
+        val apiKey = effectiveApiKey()
+        if (apiKey.isBlank() || apiKey == "MY_GEMINI_API_KEY") {
             return@withContext Result.failure(
-                IllegalStateException("GEMINI_API_KEY não configurada. Defina no .env ou no painel de Secrets.")
+                IllegalStateException(
+                    "API key do Gemini não configurada. Abra Configurações no app e cole sua chave."
+                )
             )
         }
 
@@ -76,10 +94,10 @@ object GeminiClient {
                     response.message
                 }
                 val hint = when (response.code) {
-                    400 -> " Verifique o nome do modelo ($modelName) e o formato do prompt."
-                    401, 403 -> " Chave de API inválida ou sem permissão."
-                    404 -> " Modelo '$modelName' não encontrado. Confirme se gemini-3.8-flash está disponível na sua conta."
-                    429 -> " Limite de requisições atingido; tente novamente em instantes."
+                    400 -> " Verifique o nome do modelo ($modelName)."
+                    401, 403 -> " Chave inválida ou sem permissão."
+                    404 -> " Modelo '$modelName' não encontrado."
+                    429 -> " Limite de requisições; tente de novo em instantes."
                     else -> ""
                 }
                 return@withContext Result.failure(
@@ -97,11 +115,7 @@ object GeminiClient {
             if (text != null && text.isNotEmpty()) {
                 Result.success(text)
             } else {
-                val blockReason = firstCandidate?.optJSONObject("finishReason")
-                    ?: parsedJson.optJSONObject("promptFeedback")?.optString("blockReason")
-                Result.failure(
-                    Exception("Resposta vazia do modelo ($modelName). Motivo: ${blockReason ?: "desconhecido"}")
-                )
+                Result.failure(Exception("Resposta vazia do modelo ($modelName)."))
             }
         } catch (e: Exception) {
             Result.failure(e)
