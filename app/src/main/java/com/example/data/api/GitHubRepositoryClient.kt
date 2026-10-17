@@ -179,16 +179,16 @@ class GitHubRepositoryClient(
     private fun isIgnoredPath(path: String): Boolean {
         val parts = path.lowercase().split("/")
         val name = parts.lastOrNull().orEmpty()
+        val safeEnvTemplate = name in setOf(".env.example", ".env.sample", ".env.template")
+        val secretDataFile = name in setOf(
+            "secrets.json", "credentials.json", "token.json", "api_key.json", "apikey.json",
+            "secrets.properties", "credentials.properties", "token.txt", "id_rsa", "id_ed25519",
+            ".npmrc", ".pypirc"
+        )
         val sensitiveName = name == ".env" ||
+            (name.startsWith(".env.") && !safeEnvTemplate) ||
             name == "local.properties" ||
-            name.contains("token") ||
-            name.contains("password") ||
-            name.contains("api_key") ||
-            name.contains("apikey") ||
-            name.startsWith(".env.") ||
-            name.contains("secret") ||
-            name.contains("credential") ||
-            name.contains("private_key") ||
+            secretDataFile ||
             name.endsWith(".jks") ||
             name.endsWith(".keystore") ||
             name.endsWith(".pem") ||
