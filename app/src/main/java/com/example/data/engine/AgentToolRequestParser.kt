@@ -14,6 +14,7 @@ sealed class AgentToolRequest {
     data class ListFiles(val path: String = ".") : AgentToolRequest()
     data class ReadFile(val path: String) : AgentToolRequest()
     data class WriteFile(val path: String, val content: String) : AgentToolRequest()
+    data class RunCommand(val command: String) : AgentToolRequest()
 }
 
 object AgentToolRequestParser {
