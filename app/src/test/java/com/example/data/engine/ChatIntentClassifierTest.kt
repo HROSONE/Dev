@@ -1,6 +1,8 @@
 package com.example.data.engine
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChatIntentClassifierTest {
@@ -43,5 +45,14 @@ class ChatIntentClassifierTest {
         assertEquals(ChatIntent.PLANNING, ChatIntentClassifier.classify("Propose a roadmap for this feature."))
         assertEquals(ChatIntent.AMBIGUOUS, ChatIntentClassifier.classify("Essa ideia seria interessante para o app."))
         assertEquals(ChatIntent.AMBIGUOUS, ChatIntentClassifier.classify(""))
+    }
+
+    @Test
+    fun onlyExplicitImplementationIntentAllowsMutation() {
+        assertTrue(ChatIntentClassifier.allowsMutation(ChatIntent.IMPLEMENTATION_REQUEST))
+        assertFalse(ChatIntentClassifier.allowsMutation(ChatIntent.DISCUSSION))
+        assertFalse(ChatIntentClassifier.allowsMutation(ChatIntent.EXPLANATION))
+        assertFalse(ChatIntentClassifier.allowsMutation(ChatIntent.PLANNING))
+        assertFalse(ChatIntentClassifier.allowsMutation(ChatIntent.AMBIGUOUS))
     }
 }
