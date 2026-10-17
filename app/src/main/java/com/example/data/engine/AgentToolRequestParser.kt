@@ -14,6 +14,7 @@ sealed class AgentToolRequest {
     data class ListFiles(val path: String = ".") : AgentToolRequest()
     data class ReadFile(val path: String) : AgentToolRequest()
     data class WriteFile(val path: String, val content: String) : AgentToolRequest()
+    data class RunCommand(val command: String) : AgentToolRequest()
 }
 
 object AgentToolRequestParser {
@@ -39,6 +40,7 @@ object AgentToolRequestParser {
             var tool: String? = null
             var path: String? = null
             var content: String? = null
+            var command: String? = null
             var invalid = false
 
             while (reader.hasNext()) {
@@ -46,13 +48,14 @@ object AgentToolRequestParser {
                 if (!seenFields.add(name)) invalid = true
 
                 when (name) {
-                    "tool", "path", "content" -> {
+                    "tool", "path", "content", "command" -> {
                         if (reader.peek() == JsonReader.Token.STRING) {
                             val value = reader.nextString()
                             when (name) {
                                 "tool" -> tool = value
                                 "path" -> path = value
                                 "content" -> content = value
+                                "command" -> command = value
                             }
                         } else {
                             invalid = true
@@ -83,6 +86,11 @@ object AgentToolRequestParser {
                     if (resolvedPath == null || !validPath(resolvedPath) ||
                         resolvedContent == null || resolvedContent.length > MAX_CONTENT_LENGTH
                     ) null else AgentToolRequest.WriteFile(resolvedPath, resolvedContent)
+                }
+                "run_command" -> {
+                    val resolvedCommand = command
+                    if (resolvedCommand == null || resolvedCommand.isBlank() || resolvedCommand.length > 2_048) null
+                    else AgentToolRequest.RunCommand(resolvedCommand)
                 }
                 else -> null
             }

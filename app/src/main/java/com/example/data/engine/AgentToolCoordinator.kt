@@ -18,6 +18,7 @@ sealed class AgentToolExecution {
 
 class AgentToolCoordinator(
     private val workspaceTools: WorkspaceFileTools,
+    private val commandRunner: WorkspaceCommandRunner? = null,
     private val maxListedFiles: Int = 200,
     private val maxOutputChars: Int = 20_000
 ) {
@@ -66,6 +67,30 @@ class AgentToolCoordinator(
                         AgentToolExecution.Rejected("A política exige confirmação para esta operação.")
                     ToolDispatchResult.Denied ->
                         AgentToolExecution.Rejected("A política de segurança negou a leitura solicitada.")
+                }
+            }
+            is AgentToolRequest.RunCommand -> {
+                if (ToolExecutionPolicy.evaluate(mode, intent, ToolRisk.READ_ONLY) != ToolPolicyDecision.ALLOW) {
+                    return AgentToolExecution.Rejected("A política de segurança negou a execução do comando.")
+                }
+                val runner = commandRunner
+                    ?: return AgentToolExecution.Rejected("Execução de comandos não está configurada.")
+                try {
+                    val result = runner.run(request.command)
+                    val status = when {
+                        result.timedOut -> "TIMEOUT após o limite de tempo"
+                        else -> "código de saída ${result.exitCode}"
+                    }
+                    val suffix = buildString {
+                        if (result.timedOut) append("\n[Comando interrompido por tempo limite.]")
+                        if (result.outputTruncated) append("\n[Saída truncada pelo limite.]")
+                    }
+                    AgentToolExecution.Completed(
+                        toolName = "run_command",
+                        output = "Comando: ${result.command}\n$status\n${result.output}$suffix".take(maxOutputChars)
+                    )
+                } catch (e: Exception) {
+                    AgentToolExecution.Rejected(e.message ?: "Comando negado.")
                 }
             }
             is AgentToolRequest.WriteFile -> {

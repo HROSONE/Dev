@@ -7,6 +7,14 @@ import org.junit.Test
 class AgentToolRequestParserTest {
 
     @Test
+    fun parsesRunCommandRequest() {
+        assertEquals(
+            AgentToolRequest.RunCommand("pwd"),
+            AgentToolRequestParser.parse("""{"tool":"run_command","command":"pwd"}""")
+        )
+    }
+
+    @Test
     fun parsesListFilesRequest() {
         assertEquals(
             AgentToolRequest.ListFiles("src"),
