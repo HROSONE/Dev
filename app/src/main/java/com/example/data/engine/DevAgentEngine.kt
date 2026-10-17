@@ -20,10 +20,6 @@ sealed class AgentExecutionEvent {
     data class ToolCallUpdated(val toolCall: ToolCallInfo) : AgentExecutionEvent()
     data class FinalResponseChunk(val text: String, val metrics: AgentMetrics) : AgentExecutionEvent()
     data class Error(val message: String) : AgentExecutionEvent()
-    /**
-     * Mutação proposta. A UI deve mostrar o diálogo e chamar o callback
-     * [confirmMutation] com true/false. O engine espera a resposta.
-     */
     data class MutationProposed(
         val toolName: String,
         val path: String,
@@ -46,23 +42,28 @@ class DevAgentEngine(
         speed: ReasoningSpeed,
         repositoryName: String = "",
         repositoryFiles: List<RepoFile> = emptyList(),
-        confirmMutation: suspend (toolName: String, path: String, contentPreview: String) -> Boolean = { _, _, _ -> false }
+        confirmMutation: suspend (toolName: String, path: String, contentPreview: String) -> Boolean =
+            { _, _, _ -> false }
     ): Flow<AgentExecutionEvent> = flow {
         val startedAt = System.currentTimeMillis()
         emit(AgentExecutionEvent.ThinkingTick(0.0))
 
         if (!GeminiClient.isApiKeyConfigured()) {
-            emit(AgentExecutionEvent.Error(
-                "A chave do Gemini não está configurada. Nenhuma ação foi executada. " +
-                    "Configure GEMINI_API_KEY no .env ou no painel de Secrets."
-            ))
+            emit(
+                AgentExecutionEvent.Error(
+                    "A chave do Gemini não está configurada. Nenhuma ação foi executada. " +
+                        "Configure GEMINI_API_KEY no .env ou no painel de Secrets."
+                )
+            )
             return@flow
         }
 
         val intent = ChatIntentClassifier.classify(userPrompt)
-        emit(AgentExecutionEvent.ThoughtStepAdded(
-            "Intenção identificada: ${intent.name.lowercase().replace('_', ' ')}"
-        ))
+        emit(
+            AgentExecutionEvent.ThoughtStepAdded(
+                "Intenção identificada: ${intent.name.lowercase().replace('_', ' ')}"
+            )
+        )
 
         val systemPrompt = buildString {
             append(ChatIntentClassifier.instructionFor(intent)).append(" ")
@@ -83,15 +84,24 @@ class DevAgentEngine(
                     "Ferramentas de escrita exigem confirmação humana na interface. "
             )
             when (mode) {
-                AgentMode.ASK -> append("Neste modo, explique e responda perguntas técnicas; ferramentas de leitura podem ser usadas quando apropriado.")
-                AgentMode.IMAGINE -> append("Neste modo, proponha arquitetura, etapas e critérios de validação; não faça alterações.")
-                AgentMode.BUILD -> append("Neste modo você pode ler o workspace e propor mudanças. Escritas só são aplicadas após confirmação explícita do usuário.")
+                AgentMode.ASK ->
+                    append("Neste modo, explique e responda perguntas técnicas; ferramentas de leitura podem ser usadas quando apropriado.")
+                AgentMode.IMAGINE ->
+                    append("Neste modo, proponha arquitetura, etapas e critérios de validação; não faça alterações.")
+                AgentMode.BUILD ->
+                    append("Neste modo você pode ler o workspace e propor mudanças. Escritas só são aplicadas após confirmação explícita do usuário.")
             }
             if (repositoryName.isNotBlank()) {
-                append(" O repositório GitHub selecionado é $repositoryName. As ferramentas operam no workspace local sincronizado; não escrevem diretamente no GitHub.")
+                append(
+                    " O repositório GitHub selecionado é $repositoryName. " +
+                        "As ferramentas operam no workspace local sincronizado; não escrevem diretamente no GitHub."
+                )
             }
             if (repositoryFiles.isNotEmpty()) {
-                append(" O contexto de arquivos abaixo foi lido do GitHub e está disponível no workspace local para análise e edição confirmada.")
+                append(
+                    " O contexto de arquivos abaixo foi lido do GitHub e está disponível no workspace local " +
+                        "para análise e edição confirmada."
+                )
             } else {
                 append(" Nenhum conteúdo de arquivo do repositório GitHub está disponível no contexto desta solicitação.")
             }
@@ -115,6 +125,7 @@ class DevAgentEngine(
         var toolsRun = 0
         var filesInspected = repositoryFiles.size
         var linesChanged = 0
+        val activeToolIds = mutableMapOf<String, String>()
 
         val result = loop.run(
             initialPrompt = promptWithContext,
@@ -127,46 +138,53 @@ class DevAgentEngine(
                     systemInstruction = systemPrompt
                 )
             },
-            confirmMutation = { toolName, path ->
-                // Extrai preview do conteúdo a partir do último request parseado se possível.
-                // O coordinator já decidiu NeedsConfirmation; o path é confiável.
-                val preview = "(conteúdo proposto para $path)"
-                emit(AgentExecutionEvent.MutationProposed(toolName, path, preview))
-                confirmMutation(toolName, path, preview)
+            confirmMutation = { toolName, path, contentPreview ->
+                emit(AgentExecutionEvent.MutationProposed(toolName, path, contentPreview))
+                confirmMutation(toolName, path, contentPreview)
             },
             onToolEvent = { event ->
                 when (event) {
                     is ToolLoopEvent.Started -> {
                         toolsRun++
-                        val toolType = mapToolType(event.toolName)
-                        val info = ToolCallInfo(
-                            id = UUID.randomUUID().toString(),
-                            type = toolType,
-                            title = event.toolName,
-                            detail = event.detail,
-                            status = ExecutionStatus.RUNNING
+                        val id = UUID.randomUUID().toString()
+                        activeToolIds[event.toolName + event.detail] = id
+                        event.toolCallId = id
+                        emit(
+                            AgentExecutionEvent.ToolCallStarted(
+                                ToolCallInfo(
+                                    id = id,
+                                    type = mapToolType(event.toolName),
+                                    title = event.toolName,
+                                    detail = event.detail,
+                                    status = ExecutionStatus.RUNNING
+                                )
+                            )
                         )
-                        emit(AgentExecutionEvent.ToolCallStarted(info))
-                        event.toolCallId = info.id
                     }
                     is ToolLoopEvent.Completed -> {
                         if (event.toolName == "read_file" || event.toolName == "list_files") {
                             filesInspected++
                         }
-                        if (event.toolName == "write_file") {
+                        if (event.toolName == "write_file" && event.success) {
                             linesChanged += event.output.lines().size.coerceAtMost(500)
                         }
-                        val info = ToolCallInfo(
-                            id = event.toolCallId ?: UUID.randomUUID().toString(),
-                            type = mapToolType(event.toolName),
-                            title = event.toolName,
-                            detail = event.detail,
-                            status = if (event.success) ExecutionStatus.SUCCESS else ExecutionStatus.FAILED,
-                            durationMs = event.durationMs,
-                            output = event.output.take(8_000),
-                            isExpanded = true
+                        val id = event.toolCallId
+                            ?: activeToolIds[event.toolName + event.detail]
+                            ?: UUID.randomUUID().toString()
+                        emit(
+                            AgentExecutionEvent.ToolCallUpdated(
+                                ToolCallInfo(
+                                    id = id,
+                                    type = mapToolType(event.toolName),
+                                    title = event.toolName,
+                                    detail = event.detail,
+                                    status = if (event.success) ExecutionStatus.SUCCESS else ExecutionStatus.FAILED,
+                                    durationMs = event.durationMs,
+                                    output = event.output.take(8_000),
+                                    isExpanded = true
+                                )
+                            )
                         )
-                        emit(AgentExecutionEvent.ToolCallUpdated(info))
                     }
                 }
             }
@@ -177,27 +195,33 @@ class DevAgentEngine(
 
         when (result) {
             is AgentLoopResult.FinalAnswer -> {
-                emit(AgentExecutionEvent.FinalResponseChunk(
-                    text = result.text,
-                    metrics = AgentMetrics(
-                        thinkingSeconds = elapsedSeconds,
-                        commandsExecuted = toolsRun,
-                        filesInspected = filesInspected,
-                        linesChanged = linesChanged,
-                        sandboxLatencyMs = 0
+                emit(
+                    AgentExecutionEvent.FinalResponseChunk(
+                        text = result.text,
+                        metrics = AgentMetrics(
+                            thinkingSeconds = elapsedSeconds,
+                            commandsExecuted = toolsRun,
+                            filesInspected = filesInspected,
+                            linesChanged = linesChanged,
+                            sandboxLatencyMs = 0
+                        )
                     )
-                ))
+                )
             }
             is AgentLoopResult.ConfirmationRequired -> {
-                emit(AgentExecutionEvent.Error(
-                    "O agente propôs gravar '${result.path}' usando ${result.toolName}, mas a gravação foi recusada ou cancelada. " +
-                        "Nenhuma alteração foi aplicada ao workspace."
-                ))
+                emit(
+                    AgentExecutionEvent.Error(
+                        "O agente propôs gravar '${result.path}' usando ${result.toolName}, " +
+                            "mas a gravação foi recusada ou cancelada. Nenhuma alteração foi aplicada ao workspace."
+                    )
+                )
             }
             is AgentLoopResult.Failed -> {
-                emit(AgentExecutionEvent.Error(
-                    "${result.message} Nenhuma alteração não confirmada foi aplicada."
-                ))
+                emit(
+                    AgentExecutionEvent.Error(
+                        "${result.message} Nenhuma alteração não confirmada foi aplicada."
+                    )
+                )
             }
         }
     }
@@ -245,7 +269,6 @@ class DevAgentEngine(
     }
 }
 
-/** Eventos internos do loop de ferramentas, usados para reportar à UI. */
 sealed class ToolLoopEvent {
     data class Started(
         val toolName: String,
