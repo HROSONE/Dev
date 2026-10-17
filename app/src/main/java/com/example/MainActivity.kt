@@ -20,7 +20,9 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.data.model.DiffLineType
 import com.example.ui.components.AgentModeSelector
+import com.example.ui.components.DiffView
 import com.example.ui.screens.AgentChatScreen
 import com.example.ui.screens.ArchitectureGuideScreen
 import com.example.ui.screens.SandboxWorkspaceScreen
@@ -57,25 +59,14 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
         }
     }
 
-    // Diálogo de confirmação de mutação
     uiState.pendingMutation?.let { mutation ->
         AlertDialog(
             onDismissRequest = { viewModel.respondToMutation(false) },
-            title = {
-                Text(
-                    "Confirmar gravação", 
-                    fontSize = 16.sp, 
-                    color = TextPrimary
-                )
-            },
+            title = { Text("Confirmar gravação", fontSize = 16.sp, color = TextPrimary) },
             text = {
                 Column(modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        text = "O agente quer gravar o arquivo:",
-                        fontSize = 12.sp,
-                        color = TextSecondary
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Text("Arquivo:", fontSize = 12.sp, color = TextSecondary)
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = mutation.path,
                         fontSize = 13.sp,
@@ -83,32 +74,41 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                         fontFamily = FontFamily.Monospace
                     )
                     Spacer(modifier = Modifier.height(10.dp))
-                    Text(
-                        text = "Prévia do conteúdo (até 4.000 caracteres):",
-                        fontSize = 12.sp,
-                        color = TextSecondary
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Surface(
-                        color = DarkSurface,
-                        shape = MaterialTheme.shapes.small,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 220.dp)
-                    ) {
-                        Text(
-                            text = mutation.contentPreview.ifBlank { "(vazio)" },
-                            fontSize = 11.sp,
-                            fontFamily = FontFamily.Monospace,
-                            color = TextPrimary,
+                    if (mutation.diffLines.isNotEmpty()) {
+                        Text("Diff:", fontSize = 12.sp, color = TextSecondary)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Box(
                             modifier = Modifier
-                                .padding(8.dp)
+                                .fillMaxWidth()
+                                .heightIn(max = 180.dp)
                                 .verticalScroll(rememberScrollState())
-                        )
+                        ) {
+                            DiffView(lines = mutation.diffLines)
+                        }
+                    } else {
+                        Text("Prévia:", fontSize = 12.sp, color = TextSecondary)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Surface(
+                            color = DarkSurface,
+                            shape = MaterialTheme.shapes.small,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 180.dp)
+                        ) {
+                            Text(
+                                text = mutation.contentPreview.ifBlank { "(vazio)" },
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = TextPrimary,
+                                modifier = Modifier
+                                    .padding(8.dp)
+                                    .verticalScroll(rememberScrollState())
+                            )
+                        }
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "A gravação ocorre apenas no workspace isolado do app. Nada é enviado ao GitHub automaticamente.",
+                        text = "Grava só no workspace local. Use a aba Commit para enviar ao GitHub.",
                         fontSize = 11.sp,
                         color = AccentYellow
                     )
@@ -118,17 +118,13 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                 TextButton(
                     onClick = { viewModel.respondToMutation(true) },
                     modifier = Modifier.testTag("confirm_mutation_approve")
-                ) {
-                    Text("Aprovar e gravar", color = AccentGreen)
-                }
+                ) { Text("Aprovar e gravar", color = AccentGreen) }
             },
             dismissButton = {
                 TextButton(
                     onClick = { viewModel.respondToMutation(false) },
                     modifier = Modifier.testTag("confirm_mutation_reject")
-                ) {
-                    Text("Recusar", color = AccentRed)
-                }
+                ) { Text("Recusar", color = AccentRed) }
             },
             containerColor = DarkSurfaceVariant
         )
@@ -141,7 +137,7 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
             text = {
                 Column {
                     Text(
-                        text = "Informe o repositório para o conector GitHub do agente:",
+                        text = "owner/repo — token opcional (leitura ou contents:write para commit)",
                         fontSize = 12.sp,
                         color = TextSecondary
                     )
@@ -163,8 +159,8 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                     OutlinedTextField(
                         value = githubTokenText,
                         onValueChange = { githubTokenText = it },
-                        label = { Text("Token GitHub (opcional para repositórios públicos)") },
-                        placeholder = { Text("ghp_… ou github_pat_…") },
+                        label = { Text("Token GitHub (opcional)") },
+                        placeholder = { Text("ghp_… / github_pat_…") },
                         singleLine = true,
                         enabled = !uiState.isConnectingRepo,
                         visualTransformation = PasswordVisualTransformation(),
@@ -176,14 +172,9 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                         )
                     )
                     Text(
-                        text = "Para repositórios privados, use um token com somente permissão de leitura de conteúdo. O token é usado em memória nesta sessão e não é salvo pelo app.",
+                        text = "Token fica só na memória desta sessão. contents:write habilita commit.",
                         fontSize = 11.sp,
                         color = TextSecondary
-                    )
-                    Text(
-                        text = "Privacidade: ao enviar uma pergunta, os arquivos carregados podem ser enviados ao Gemini para análise. Arquivos de ambiente, chaves e credenciais comuns são excluídos da leitura automática; revise o conteúdo antes de usar.",
-                        fontSize = 11.sp,
-                        color = AccentYellow
                     )
                     if (uiState.repositoryStatus.isNotBlank()) {
                         Spacer(modifier = Modifier.height(6.dp))
@@ -244,12 +235,7 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                 NavigationBarItem(
                     selected = uiState.activeTab == 0,
                     onClick = { viewModel.setTab(0) },
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Default.SmartToy,
-                            contentDescription = "Agente"
-                        )
-                    },
+                    icon = { Icon(Icons.Default.SmartToy, contentDescription = "Agente") },
                     label = { Text("Agente", fontSize = 11.sp) },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = AccentCyan,
@@ -260,17 +246,11 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                     ),
                     modifier = Modifier.testTag("nav_agent_chat")
                 )
-
                 NavigationBarItem(
                     selected = uiState.activeTab == 1,
                     onClick = { viewModel.setTab(1) },
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Default.Terminal,
-                            contentDescription = "Sandbox"
-                        )
-                    },
-                    label = { Text("Sandbox & Repo", fontSize = 11.sp) },
+                    icon = { Icon(Icons.Default.Terminal, contentDescription = "Sandbox") },
+                    label = { Text("Sandbox", fontSize = 11.sp) },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = AccentCyan,
                         selectedTextColor = AccentCyan,
@@ -280,17 +260,11 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                     ),
                     modifier = Modifier.testTag("nav_sandbox_workspace")
                 )
-
                 NavigationBarItem(
                     selected = uiState.activeTab == 2,
                     onClick = { viewModel.setTab(2) },
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Default.Code,
-                            contentDescription = "Arquitetura"
-                        )
-                    },
-                    label = { Text("Arquitetura & Código", fontSize = 11.sp) },
+                    icon = { Icon(Icons.Default.Code, contentDescription = "Arquitetura") },
+                    label = { Text("Arquitetura", fontSize = 11.sp) },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = AccentCyan,
                         selectedTextColor = AccentCyan,
@@ -310,37 +284,35 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                 .background(DarkBackground)
         ) {
             when (uiState.activeTab) {
-                0 -> {
-                    AgentChatScreen(
-                        messages = uiState.messages,
-                        isThinking = uiState.isThinking,
-                        thinkingSeconds = uiState.thinkingSeconds,
-                        activeRepo = uiState.activeRepo,
-                        commandsExecuted = uiState.commandsExecuted,
-                        currentPrompt = uiState.currentPrompt,
-                        onPromptChange = { viewModel.setPrompt(it) },
-                        onSubmitPrompt = { viewModel.submitPrompt() },
-                        onStopExecution = { viewModel.stopExecution() },
-                        onToggleToolExpand = { msgId, toolId -> viewModel.toggleToolExpand(msgId, toolId) },
-                        onQuickPromptSelected = { prompt ->
-                            viewModel.setPrompt(prompt)
-                            viewModel.submitPrompt()
-                        }
-                    )
-                }
-
-                1 -> {
-                    SandboxWorkspaceScreen(
-                        activeRepo = uiState.activeRepo,
-                        files = uiState.repoFiles,
-                        selectedFile = uiState.selectedFile,
-                        onSelectFile = { viewModel.selectFile(it) }
-                    )
-                }
-
-                2 -> {
-                    ArchitectureGuideScreen()
-                }
+                0 -> AgentChatScreen(
+                    messages = uiState.messages,
+                    isThinking = uiState.isThinking,
+                    thinkingSeconds = uiState.thinkingSeconds,
+                    activeRepo = uiState.activeRepo,
+                    commandsExecuted = uiState.commandsExecuted,
+                    currentPrompt = uiState.currentPrompt,
+                    onPromptChange = { viewModel.setPrompt(it) },
+                    onSubmitPrompt = { viewModel.submitPrompt() },
+                    onStopExecution = { viewModel.stopExecution() },
+                    onToggleToolExpand = { msgId, toolId -> viewModel.toggleToolExpand(msgId, toolId) },
+                    onQuickPromptSelected = { prompt ->
+                        viewModel.setPrompt(prompt)
+                        viewModel.submitPrompt()
+                    }
+                )
+                1 -> SandboxWorkspaceScreen(
+                    activeRepo = uiState.activeRepo,
+                    files = uiState.repoFiles,
+                    selectedFile = uiState.selectedFile,
+                    onSelectFile = { viewModel.selectFile(it) },
+                    terminalLogs = uiState.terminalLogs,
+                    onRunCommand = { viewModel.runTerminalCommand(it) },
+                    hasWriteToken = uiState.hasWriteToken,
+                    isCommitting = uiState.isCommitting,
+                    lastCommitStatus = uiState.lastCommitStatus,
+                    onCommitFile = { viewModel.commitFileToGitHub(it) }
+                )
+                2 -> ArchitectureGuideScreen()
             }
         }
     }
