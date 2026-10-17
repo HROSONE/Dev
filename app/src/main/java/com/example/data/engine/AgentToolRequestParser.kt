@@ -1,7 +1,7 @@
 package com.example.data.engine
 
-import org.json.JSONException
-import org.json.JSONObject
+import com.squareup.moshi.JsonReader
+import okio.Buffer
 
 /**
  * Parses the explicit JSON envelope used by the model to request a workspace tool.
@@ -31,26 +31,62 @@ object AgentToolRequestParser {
         if (!jsonText.startsWith("{") || !jsonText.endsWith("}")) return null
 
         return try {
-            val json = JSONObject(jsonText)
-            when (json.optString("tool")) {
+            val reader = JsonReader.of(Buffer().writeUtf8(jsonText))
+            reader.isLenient = false
+            reader.beginObject()
+
+            val seenFields = mutableSetOf<String>()
+            var tool: String? = null
+            var path: String? = null
+            var content: String? = null
+            var invalid = false
+
+            while (reader.hasNext()) {
+                val name = reader.nextName()
+                if (!seenFields.add(name)) invalid = true
+
+                when (name) {
+                    "tool", "path", "content" -> {
+                        if (reader.peek() == JsonReader.Token.STRING) {
+                            val value = reader.nextString()
+                            when (name) {
+                                "tool" -> tool = value
+                                "path" -> path = value
+                                "content" -> content = value
+                            }
+                        } else {
+                            invalid = true
+                            reader.skipValue()
+                        }
+                    }
+                    else -> reader.skipValue()
+                }
+            }
+
+            reader.endObject()
+            if (reader.peek() != JsonReader.Token.END_DOCUMENT || invalid) return null
+
+            when (tool) {
                 "list_files" -> {
-                    val path = json.optString("path", ".")
-                    if (!validPath(path)) null else AgentToolRequest.ListFiles(path)
+                    val resolvedPath = path ?: "."
+                    if (!validPath(resolvedPath)) null
+                    else AgentToolRequest.ListFiles(resolvedPath)
                 }
                 "read_file" -> {
-                    val path = json.optString("path")
-                    if (!validPath(path)) null else AgentToolRequest.ReadFile(path)
+                    val resolvedPath = path
+                    if (resolvedPath == null || !validPath(resolvedPath)) null
+                    else AgentToolRequest.ReadFile(resolvedPath)
                 }
                 "write_file" -> {
-                    val path = json.optString("path")
-                    val content = json.optString("content")
-                    if (!validPath(path) || content.length > MAX_CONTENT_LENGTH ||
-                        !json.has("content") || json.isNull("content")
-                    ) null else AgentToolRequest.WriteFile(path, content)
+                    val resolvedPath = path
+                    val resolvedContent = content
+                    if (resolvedPath == null || !validPath(resolvedPath) ||
+                        resolvedContent == null || resolvedContent.length > MAX_CONTENT_LENGTH
+                    ) null else AgentToolRequest.WriteFile(resolvedPath, resolvedContent)
                 }
                 else -> null
             }
-        } catch (_: JSONException) {
+        } catch (_: Exception) {
             null
         }
     }
