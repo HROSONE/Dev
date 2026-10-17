@@ -166,7 +166,8 @@ class DevAgentViewModel : ViewModel() {
                     userPrompt = prompt,
                     mode = _uiState.value.selectedMode,
                     speed = _uiState.value.selectedSpeed,
-                    repositoryName = _uiState.value.activeRepo
+                    repositoryName = _uiState.value.activeRepo,
+                    repositoryFiles = _uiState.value.repoFiles
                 ).collect { event ->
                     when (event) {
                         is AgentExecutionEvent.ThinkingTick -> {
