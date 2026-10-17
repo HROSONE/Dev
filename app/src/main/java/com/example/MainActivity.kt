@@ -7,12 +7,15 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -52,6 +55,83 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
             showRepoDialog = false
             githubTokenText = ""
         }
+    }
+
+    // Diálogo de confirmação de mutação
+    uiState.pendingMutation?.let { mutation ->
+        AlertDialog(
+            onDismissRequest = { viewModel.respondToMutation(false) },
+            title = {
+                Text(
+                    "Confirmar gravação", 
+                    fontSize = 16.sp, 
+                    color = TextPrimary
+                )
+            },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "O agente quer gravar o arquivo:",
+                        fontSize = 12.sp,
+                        color = TextSecondary
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = mutation.path,
+                        fontSize = 13.sp,
+                        color = AccentCyan,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "Prévia do conteúdo (até 4.000 caracteres):",
+                        fontSize = 12.sp,
+                        color = TextSecondary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Surface(
+                        color = DarkSurface,
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 220.dp)
+                    ) {
+                        Text(
+                            text = mutation.contentPreview.ifBlank { "(vazio)" },
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = TextPrimary,
+                            modifier = Modifier
+                                .padding(8.dp)
+                                .verticalScroll(rememberScrollState())
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "A gravação ocorre apenas no workspace isolado do app. Nada é enviado ao GitHub automaticamente.",
+                        fontSize = 11.sp,
+                        color = AccentYellow
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { viewModel.respondToMutation(true) },
+                    modifier = Modifier.testTag("confirm_mutation_approve")
+                ) {
+                    Text("Aprovar e gravar", color = AccentGreen)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { viewModel.respondToMutation(false) },
+                    modifier = Modifier.testTag("confirm_mutation_reject")
+                ) {
+                    Text("Recusar", color = AccentRed)
+                }
+            },
+            containerColor = DarkSurfaceVariant
+        )
     }
 
     if (showRepoDialog) {
