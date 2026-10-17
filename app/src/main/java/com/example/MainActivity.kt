@@ -13,14 +13,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.data.model.DiffLineType
 import com.example.ui.components.AgentModeSelector
 import com.example.ui.components.DiffView
 import com.example.ui.screens.AgentChatScreen
@@ -49,14 +50,122 @@ class MainActivity : ComponentActivity() {
 fun DevAgentApp(viewModel: DevAgentViewModel) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var showRepoDialog by remember { mutableStateOf(false) }
+    var showSettingsDialog by remember { mutableStateOf(false) }
     var repoInputText by remember { mutableStateOf(uiState.activeRepo) }
     var githubTokenText by remember { mutableStateOf("") }
+    var apiKeyInput by remember { mutableStateOf("") }
+    var showApiKeyPlain by remember { mutableStateOf(false) }
 
     LaunchedEffect(uiState.repositoryStatus) {
         if (uiState.repositoryStatus.startsWith("Conectado")) {
             showRepoDialog = false
             githubTokenText = ""
         }
+    }
+
+    // Diálogo Configurações — colar API key
+    if (showSettingsDialog) {
+        LaunchedEffect(Unit) {
+            apiKeyInput = viewModel.getStoredApiKey()
+        }
+        AlertDialog(
+            onDismissRequest = { showSettingsDialog = false },
+            title = {
+                Text("Configurações", fontSize = 16.sp, color = TextPrimary)
+            },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "Gemini API key",
+                        fontSize = 13.sp,
+                        color = TextPrimary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Cole a chave de https://aistudio.google.com/apikey. Fica salva só neste aparelho.",
+                        fontSize = 11.sp,
+                        color = TextSecondary
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = apiKeyInput,
+                        onValueChange = { apiKeyInput = it },
+                        label = { Text("API key") },
+                        placeholder = { Text("AIza…") },
+                        singleLine = true,
+                        visualTransformation = if (showApiKeyPlain) {
+                            VisualTransformation.None
+                        } else {
+                            PasswordVisualTransformation()
+                        },
+                        trailingIcon = {
+                            IconButton(onClick = { showApiKeyPlain = !showApiKeyPlain }) {
+                                Icon(
+                                    imageVector = if (showApiKeyPlain) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = if (showApiKeyPlain) "Ocultar" else "Mostrar",
+                                    tint = TextSecondary
+                                )
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("settings_gemini_api_key"),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = TextPrimary,
+                            unfocusedTextColor = TextPrimary,
+                            focusedBorderColor = AccentCyan,
+                            unfocusedBorderColor = DarkBorder
+                        )
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .background(
+                                    if (uiState.hasGeminiKey) AccentGreen else AccentYellow,
+                                    shape = MaterialTheme.shapes.small
+                                )
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (uiState.hasGeminiKey) "Chave configurada" else "Nenhuma chave",
+                            fontSize = 12.sp,
+                            color = if (uiState.hasGeminiKey) AccentGreen else AccentYellow
+                        )
+                    }
+                    if (uiState.apiKeyStatus.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(uiState.apiKeyStatus, fontSize = 11.sp, color = AccentCyan)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.saveGeminiApiKey(apiKeyInput)
+                        showSettingsDialog = false
+                    },
+                    modifier = Modifier.testTag("settings_save_api_key")
+                ) {
+                    Text("Salvar", color = AccentGreen)
+                }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        apiKeyInput = ""
+                        viewModel.saveGeminiApiKey("")
+                    }) {
+                        Text("Limpar", color = AccentRed)
+                    }
+                    TextButton(onClick = { showSettingsDialog = false }) {
+                        Text("Fechar", color = TextSecondary)
+                    }
+                }
+            },
+            containerColor = DarkSurfaceVariant
+        )
     }
 
     uiState.pendingMutation?.let { mutation ->
@@ -213,6 +322,34 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
             .background(DarkBackground),
         topBar = {
             Column {
+                // Barra com ícone de configurações
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(DarkSurface)
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (!uiState.hasGeminiKey) {
+                        Text(
+                            text = "API key",
+                            fontSize = 11.sp,
+                            color = AccentYellow,
+                            modifier = Modifier.padding(end = 4.dp)
+                        )
+                    }
+                    IconButton(
+                        onClick = { showSettingsDialog = true },
+                        modifier = Modifier.testTag("open_settings_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Configurações",
+                            tint = if (uiState.hasGeminiKey) AccentCyan else AccentYellow
+                        )
+                    }
+                }
                 AgentModeSelector(
                     selectedMode = uiState.selectedMode,
                     onModeSelected = { viewModel.setMode(it) },
