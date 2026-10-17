@@ -38,7 +38,7 @@ class DevAgentViewModel : ViewModel() {
 
     private val _uiState = MutableStateFlow(
         DevAgentUiState(
-            repoFiles = createInitialRepoFiles()
+            repoFiles = emptyList()
         )
     )
     val uiState: StateFlow<DevAgentUiState> = _uiState.asStateFlow()
