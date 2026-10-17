@@ -42,12 +42,8 @@ fun SandboxWorkspaceScreen(
     var terminalLogs by remember {
         mutableStateOf(
             listOf(
-                "root@sandbox:/workspace# docker ps --format '{{.ID}}\t{{.Image}}\t{{.Status}}'",
-                "c7f918e3d09a\tpython:3.12-alpine\tUp 18 minutes (healthy)",
-                "root@sandbox:/workspace# git status",
-                "On branch main\nChanges to be committed:\n  modified:   src/api/routes/auth.py\n  new file:   src/middleware/rate_limit.py",
-                "root@sandbox:/workspace# pytest tests/test_auth.py",
-                "==== 4 passed in 0.82s ===="
+                "Terminal ainda não conectado a um ambiente de execução real.",
+                "Nenhum comando foi executado nesta sessão."
             )
         )
     }
@@ -101,11 +97,11 @@ fun SandboxWorkspaceScreen(
                     modifier = Modifier
                         .size(6.dp)
                         .clip(CircleShape)
-                        .background(AccentGreen)
+                        .background(AccentYellow)
                 )
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(
-                    text = "Sandbox Ativa",
+                    text = "Sandbox não conectada",
                     fontSize = 10.sp,
                     color = TextPrimary
                 )
@@ -281,7 +277,7 @@ fun SandboxWorkspaceScreen(
                             keyboardActions = KeyboardActions(onSend = {
                                 if (terminalInput.isNotBlank()) {
                                     val cmd = terminalInput.trim()
-                                    val output = executeSimulatedSandboxCommand(cmd)
+                                    val output = "Terminal real ainda não conectado. Nenhum comando foi executado."
                                     terminalLogs = terminalLogs + listOf("root@sandbox:/workspace# $cmd", output)
                                     terminalInput = ""
                                 }
@@ -326,7 +322,7 @@ fun SandboxWorkspaceScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Text(
-                        text = "Configuração de Segurança do Sandbox",
+                        text = "Status do Ambiente de Execução",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
                         color = TextPrimary
@@ -334,23 +330,23 @@ fun SandboxWorkspaceScreen(
 
                     StatCard(
                         title = "Mecanismo de Isolamento",
-                        value = "Docker Rootless + gVisor (runsc)",
-                        description = "Intercepta e filtra todas as chamadas de sistema (syscalls) do kernel."
+                        value = "Não conectado",
+                        description = "O app ainda não iniciou um contêiner nem verificou um mecanismo de isolamento."
                     )
                     StatCard(
                         title = "Limites de Recursos (cgroups v2)",
-                        value = "CPU: 2 Cores | Memória: 2048 MB | Disk: 10 GB",
-                        description = "Impede estouro de memória (OOM) ou ataques de negação de serviço (DoS)."
+                        value = "Limites não aplicados",
+                        description = "Os limites abaixo são metas de projeto, não configurações ativas."
                     )
                     StatCard(
                         title = "Política de Rede (Network Sandbox)",
-                        value = "Isolado (Sem acesso à rede interna/local)",
-                        description = "Permite apenas downloads de pacotes de repositórios seguros (PyPI/npm)."
+                        value = "Rede não configurada",
+                        description = "Nenhuma política de rede foi aplicada ou testada."
                     )
                     StatCard(
                         title = "Tempo Limite de Execução (Timeout)",
-                        value = "30 segundos por comando",
-                        description = "Encerra processos zumbis ou loops infinitos automaticamente com SIGKILL."
+                        value = "Timeout não aplicado",
+                        description = "Nenhum processo é iniciado pelo terminal nesta versão."
                     )
                 }
             }
