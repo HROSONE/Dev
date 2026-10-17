@@ -371,32 +371,3 @@ fun StatCard(title: String, value: String, description: String) {
     }
 }
 
-fun executeSimulatedSandboxCommand(cmd: String): String {
-    return when {
-        cmd == "pytest" || cmd.startsWith("pytest") -> """
-            ========================= test session starts ==========================
-            collected 4 items
-            tests/test_auth.py ....                                          [100%]
-            ========================= 4 passed in 0.79s ==========================
-        """.trimIndent()
-
-        cmd == "git status" -> """
-            On branch main
-            Changes to be committed:
-              (use "git restore --staged <file>..." to unstage)
-                modified:   src/api/routes/auth.py
-                new file:   src/middleware/rate_limit.py
-        """.trimIndent()
-
-        cmd == "git diff" -> """
-            diff --git a/src/api/routes/auth.py b/src/api/routes/auth.py
-            -@router.post('/login')
-            +@router.post('/login', dependencies=[Depends(rate_limiter)])
-        """.trimIndent()
-
-        cmd.startsWith("docker ps") -> "CONTAINER ID: c7f918e3d09a   IMAGE: python:3.12-alpine   STATUS: Up 22m"
-        cmd == "clear" -> "[Console Limpo]"
-        cmd.startsWith("cat ") -> "# Visualizando conteúdo do arquivo\n# Conteúdo verificado no sandbox com sucesso."
-        else -> "Comando executado com sucesso no container sandbox (Exit code 0)."
-    }
-}
