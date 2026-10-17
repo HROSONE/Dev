@@ -55,7 +55,6 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
     var repoInputText by remember { mutableStateOf(uiState.activeRepo) }
     var githubTokenText by remember { mutableStateOf("") }
 
-    // Settings form state
     var settingsProvider by remember { mutableStateOf(LlmProvider.GEMINI) }
     var geminiKeyInput by remember { mutableStateOf("") }
     var openRouterKeyInput by remember { mutableStateOf("") }
@@ -69,6 +68,13 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
         }
     }
 
+    // Banner de atualização disponível
+    uiState.updateAvailable?.let { upd ->
+        if (!showSettingsDialog) {
+            // leve: só no topo via status; botão nas configurações
+        }
+    }
+
     if (showSettingsDialog) {
         LaunchedEffect(Unit) {
             settingsProvider = uiState.llmProvider
@@ -78,15 +84,15 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
         }
         AlertDialog(
             onDismissRequest = { showSettingsDialog = false },
-            title = { Text("Configurações LLM", fontSize = 16.sp, color = TextPrimary) },
+            title = { Text("Configurações", fontSize = 16.sp, color = TextPrimary) },
             text = {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 420.dp)
+                        .heightIn(max = 480.dp)
                         .verticalScroll(rememberScrollState())
                 ) {
-                    Text("Provedor", fontSize = 12.sp, color = TextSecondary)
+                    Text("Provedor LLM", fontSize = 12.sp, color = TextSecondary)
                     Spacer(Modifier.height(6.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         LlmProvider.entries.forEach { p ->
@@ -124,8 +130,6 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                     } else {
                         Text("OpenRouter API key", fontSize = 12.sp, color = TextPrimary)
                         Spacer(Modifier.height(4.dp))
-                        Text("https://openrouter.ai/keys", fontSize = 10.sp, color = TextMuted)
-                        Spacer(Modifier.height(4.dp))
                         OutlinedTextField(
                             value = openRouterKeyInput,
                             onValueChange = { openRouterKeyInput = it },
@@ -160,11 +164,10 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                                 )
                             )
                         }
-                        Spacer(Modifier.height(6.dp))
                         OutlinedTextField(
                             value = selectedOrModel,
                             onValueChange = { selectedOrModel = it },
-                            label = { Text("ID custom (opcional)") },
+                            label = { Text("ID custom") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                             colors = OutlinedTextFieldDefaults.colors(
@@ -178,34 +181,43 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
 
                     Spacer(Modifier.height(10.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(
-                            checked = showKeysPlain,
-                            onCheckedChange = { showKeysPlain = it }
-                        )
+                        Checkbox(checked = showKeysPlain, onCheckedChange = { showKeysPlain = it })
                         Text("Mostrar chaves", fontSize = 12.sp, color = TextSecondary)
                     }
 
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            Modifier
-                                .size(8.dp)
-                                .background(
-                                    if (uiState.hasLlmKey) AccentGreen else AccentYellow,
-                                    MaterialTheme.shapes.small
-                                )
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            uiState.llmStatusLabel.ifBlank {
-                                if (uiState.hasLlmKey) "Configurado" else "Sem chave"
-                            },
-                            fontSize = 11.sp,
-                            color = if (uiState.hasLlmKey) AccentGreen else AccentYellow
-                        )
-                    }
                     if (uiState.apiKeyStatus.isNotBlank()) {
-                        Spacer(Modifier.height(4.dp))
                         Text(uiState.apiKeyStatus, fontSize = 11.sp, color = AccentCyan)
+                    }
+
+                    Spacer(Modifier.height(16.dp))
+                    HorizontalDivider(color = DarkBorder)
+                    Spacer(Modifier.height(10.dp))
+                    Text("Atualização do app", fontSize = 13.sp, color = TextPrimary)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        uiState.updateStatus.ifBlank { "Checa releases em github.com/HROSONE/Dev" },
+                        fontSize = 11.sp,
+                        color = TextSecondary
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(
+                            onClick = { viewModel.checkForAppUpdate() },
+                            enabled = !uiState.isCheckingUpdate
+                        ) {
+                            Text(if (uiState.isCheckingUpdate) "Checando…" else "Verificar", color = AccentCyan)
+                        }
+                        if (uiState.updateAvailable != null) {
+                            TextButton(
+                                onClick = { viewModel.downloadAndInstallUpdate() },
+                                enabled = !uiState.isDownloadingUpdate
+                            ) {
+                                Text(
+                                    if (uiState.isDownloadingUpdate) "Baixando…" else "Baixar e instalar",
+                                    color = AccentGreen
+                                )
+                            }
+                        }
                     }
                 }
             },
@@ -245,7 +257,6 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                             DiffView(lines = mutation.diffLines)
                         }
                     }
-                    Text("Só no workspace local.", fontSize = 11.sp, color = AccentYellow)
                 }
             },
             confirmButton = {
@@ -296,10 +307,6 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                             unfocusedBorderColor = DarkBorder
                         )
                     )
-                    if (uiState.repositoryStatus.isNotBlank()) {
-                        Spacer(Modifier.height(6.dp))
-                        Text(uiState.repositoryStatus, fontSize = 11.sp, color = TextSecondary)
-                    }
                 }
             },
             confirmButton = {
@@ -330,17 +337,18 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    val topLabel = when {
+                        uiState.updateAvailable != null -> "Update ${uiState.updateAvailable!!.versionName}"
+                        else -> uiState.llmStatusLabel.ifBlank { "LLM" }
+                    }
                     Text(
-                        text = uiState.llmStatusLabel.ifBlank { "LLM" },
+                        text = topLabel,
                         fontSize = 10.sp,
-                        color = if (uiState.hasLlmKey) AccentGreen else AccentYellow,
+                        color = if (uiState.updateAvailable != null) AccentYellow else if (uiState.hasLlmKey) AccentGreen else AccentYellow,
                         modifier = Modifier.weight(1f).padding(start = 4.dp),
                         maxLines = 1
                     )
-                    IconButton(
-                        onClick = { showSettingsDialog = true },
-                        modifier = Modifier.testTag("open_settings_button")
-                    ) {
+                    IconButton(onClick = { showSettingsDialog = true }, modifier = Modifier.testTag("open_settings_button")) {
                         Icon(
                             Icons.Default.Settings,
                             "Configurações",
