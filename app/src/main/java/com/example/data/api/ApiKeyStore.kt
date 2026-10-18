@@ -3,6 +3,7 @@ package com.example.data.api
 import android.content.Context
 import android.content.SharedPreferences
 import com.example.data.model.LlmProvider
+import com.example.data.model.QwenModelVariant
 
 /**
  * Segredos e preferências de LLM (SharedPreferences privado).
@@ -55,6 +56,36 @@ class ApiKeyStore(context: Context) {
         prefs.edit().remove(KEY_OPENROUTER).apply()
     }
 
+    // --- Qwen 2.5 Coder (Local GGUF / HuggingFace) ---
+    fun getQwenVariant(): QwenModelVariant {
+        val raw = prefs.getString(KEY_QWEN_VARIANT, QwenModelVariant.QWEN_1_5B.name)
+            ?: QwenModelVariant.QWEN_1_5B.name
+        return runCatching { QwenModelVariant.valueOf(raw) }.getOrDefault(QwenModelVariant.QWEN_1_5B)
+    }
+
+    fun setQwenVariant(variant: QwenModelVariant) {
+        prefs.edit().putString(KEY_QWEN_VARIANT, variant.name).apply()
+    }
+
+    fun getQwenLocalEndpoint(): String =
+        prefs.getString(KEY_QWEN_ENDPOINT, QwenCoderClient.DEFAULT_LOCAL_ENDPOINT)
+            .orEmpty()
+            .ifBlank { QwenCoderClient.DEFAULT_LOCAL_ENDPOINT }
+
+    fun setQwenLocalEndpoint(endpoint: String) {
+        prefs.edit().putString(
+            KEY_QWEN_ENDPOINT,
+            endpoint.trim().ifBlank { QwenCoderClient.DEFAULT_LOCAL_ENDPOINT }
+        ).apply()
+    }
+
+    fun getHuggingFaceKey(): String =
+        prefs.getString(KEY_HF_TOKEN, "").orEmpty().trim()
+
+    fun setHuggingFaceKey(token: String) {
+        prefs.edit().putString(KEY_HF_TOKEN, token.trim()).apply()
+    }
+
     // --- Provider / model ---
     fun getProvider(): LlmProvider {
         val raw = prefs.getString(KEY_PROVIDER, LlmProvider.GEMINI.name) ?: LlmProvider.GEMINI.name
@@ -81,6 +112,7 @@ class ApiKeyStore(context: Context) {
     fun isConfigured(): Boolean = when (getProvider()) {
         LlmProvider.GEMINI -> isGeminiConfigured()
         LlmProvider.OPENROUTER -> isOpenRouterConfigured()
+        LlmProvider.QWEN_CODER -> QwenCoderClient.isConfigured()
     }
 
     companion object {
@@ -89,5 +121,8 @@ class ApiKeyStore(context: Context) {
         private const val KEY_OPENROUTER = "openrouter_api_key"
         private const val KEY_PROVIDER = "llm_provider"
         private const val KEY_OR_MODEL = "openrouter_model_id"
+        private const val KEY_QWEN_VARIANT = "qwen_coder_variant"
+        private const val KEY_QWEN_ENDPOINT = "qwen_local_endpoint"
+        private const val KEY_HF_TOKEN = "hf_api_token"
     }
 }

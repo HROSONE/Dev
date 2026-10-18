@@ -1,17 +1,22 @@
 package com.example.ui.viewmodel
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.api.ApiKeyStore
 import com.example.data.api.GeminiClient
 import com.example.data.api.GitHubRepositoryClient
 import com.example.data.api.LlmGateway
+import com.example.data.api.LocalModelManager
 import com.example.data.api.OpenRouterClient
+import com.example.data.api.QwenCoderClient
 import com.example.data.engine.AgentExecutionEvent
+import com.example.data.engine.ChatHistoryStore
 import com.example.data.engine.DevAgentEngine
-import com.example.data.engine.WorkspaceCommandRunner
+import com.example.data.engine.LocalProjectCreator
 import com.example.data.engine.WorkspaceChangeTracker
+import com.example.data.engine.WorkspaceCommandRunner
 import com.example.data.model.*
 import com.example.data.update.AppUpdateChecker
 import com.example.data.update.AppUpdateInfo
@@ -32,6 +37,9 @@ data class DevAgentUiState(
     val selectedSpeed: ReasoningSpeed = ReasoningSpeed.DEEP_THINKING,
     val autoApproveEdits: Boolean = true,
     val activeRepo: String = "",
+    val isLocalOnlyProject: Boolean = false,
+    val activeSessionId: String = "",
+    val chatSessions: List<ChatSessionSummary> = emptyList(),
     val messages: List<ChatMessage> = emptyList(),
     val isThinking: Boolean = false,
     val thinkingSeconds: Double = 0.0,
@@ -41,6 +49,7 @@ data class DevAgentUiState(
     val repoFiles: List<RepoFile> = emptyList(),
     val selectedFile: RepoFile? = null,
     val isConnectingRepo: Boolean = false,
+    val isCreatingGitHubRepo: Boolean = false,
     val repositoryStatus: String = "",
     val pendingMutation: PendingMutation? = null,
     val terminalLogs: List<String> = listOf(
@@ -53,6 +62,12 @@ data class DevAgentUiState(
     val hasLlmKey: Boolean = false,
     val llmProvider: LlmProvider = LlmProvider.GEMINI,
     val openRouterModelId: String = LlmProvider.DEFAULT_OPENROUTER_MODEL,
+    val qwenVariant: QwenModelVariant = QwenModelVariant.QWEN_1_5B,
+    val qwenLocalEndpoint: String = QwenCoderClient.DEFAULT_LOCAL_ENDPOINT,
+    val isQwenModelDownloaded: Boolean = false,
+    val isDownloadingQwenModel: Boolean = false,
+    val qwenDownloadProgress: Float = 0f,
+    val qwenDownloadStatus: String = "",
     val llmStatusLabel: String = "",
     val apiKeyStatus: String = "",
     val updateAvailable: AppUpdateInfo? = null,
@@ -71,8 +86,11 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
     private val githubClient = GitHubRepositoryClient()
     private val commandRunner by lazy { WorkspaceCommandRunner(workspaceDir) }
     private val apiKeyStore = ApiKeyStore(application)
+    private val localModelManager = LocalModelManager(application)
+    private val chatHistoryStore = ChatHistoryStore(application)
     private val updateChecker = AppUpdateChecker()
     private var activeJob: Job? = null
+    private var qwenDownloadJob: Job? = null
 
     private var sessionToken: String = ""
     private var defaultBranch: String = "main"
@@ -84,8 +102,96 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
 
     init {
         applyStoredLlmConfig()
+        restoreLastChatSession()
         refreshWorkspaceListing()
         checkForAppUpdate(autoDownload = true)
+    }
+
+    private fun restoreLastChatSession() {
+        val sessions = chatHistoryStore.listSessions()
+        val lastId = chatHistoryStore.getActiveSessionId().ifBlank {
+            sessions.firstOrNull()?.id.orEmpty()
+        }
+        if (lastId.isNotBlank()) {
+            val loaded = chatHistoryStore.loadSession(lastId)
+            if (loaded != null) {
+                val (savedRepo, savedMessages) = loaded
+                _uiState.update {
+                    it.copy(
+                        activeSessionId = lastId,
+                        activeRepo = savedRepo.ifBlank { it.activeRepo },
+                        messages = savedMessages,
+                        chatSessions = sessions
+                    )
+                }
+                return
+            }
+        }
+        val newId = chatHistoryStore.newSessionId()
+        chatHistoryStore.setActiveSessionId(newId)
+        _uiState.update {
+            it.copy(activeSessionId = newId, chatSessions = sessions)
+        }
+    }
+
+    private fun persistCurrentChatSession() {
+        val state = _uiState.value
+        val sessionId = state.activeSessionId.ifBlank { chatHistoryStore.newSessionId() }
+        chatHistoryStore.saveSession(
+            sessionId = sessionId,
+            activeRepo = state.activeRepo,
+            messages = state.messages
+        )
+        _uiState.update {
+            it.copy(
+                activeSessionId = sessionId,
+                chatSessions = chatHistoryStore.listSessions()
+            )
+        }
+    }
+
+    fun startNewChatSession() {
+        stopExecution()
+        val newId = chatHistoryStore.newSessionId()
+        chatHistoryStore.setActiveSessionId(newId)
+        _uiState.update {
+            it.copy(
+                activeSessionId = newId,
+                messages = emptyList(),
+                thinkingSeconds = 0.0,
+                chatSessions = chatHistoryStore.listSessions()
+            )
+        }
+    }
+
+    fun selectChatSession(sessionId: String) {
+        stopExecution()
+        val loaded = chatHistoryStore.loadSession(sessionId) ?: return
+        chatHistoryStore.setActiveSessionId(sessionId)
+        val (savedRepo, savedMessages) = loaded
+        _uiState.update {
+            it.copy(
+                activeSessionId = sessionId,
+                activeRepo = savedRepo.ifBlank { it.activeRepo },
+                messages = savedMessages,
+                chatSessions = chatHistoryStore.listSessions()
+            )
+        }
+    }
+
+    fun deleteChatSession(sessionId: String) {
+        chatHistoryStore.deleteSession(sessionId)
+        val remaining = chatHistoryStore.listSessions()
+        if (_uiState.value.activeSessionId == sessionId) {
+            val next = remaining.firstOrNull()
+            if (next != null) {
+                selectChatSession(next.id)
+            } else {
+                startNewChatSession()
+            }
+        } else {
+            _uiState.update { it.copy(chatSessions = remaining) }
+        }
     }
 
     private fun applyStoredLlmConfig() {
@@ -93,17 +199,40 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
         val orModel = apiKeyStore.getOpenRouterModelId()
         val geminiKey = apiKeyStore.resolveGeminiKey()
         val orKey = apiKeyStore.getOpenRouterKey()
+        val qwenVariant = apiKeyStore.getQwenVariant()
+        val qwenEndpoint = apiKeyStore.getQwenLocalEndpoint()
+        val hfKey = apiKeyStore.getHuggingFaceKey()
 
         if (geminiKey.isNotBlank()) GeminiClient.setApiKey(geminiKey)
         if (orKey.isNotBlank()) OpenRouterClient.setApiKey(orKey)
 
+        QwenCoderClient.activeVariant = qwenVariant
+        QwenCoderClient.localEndpointUrl = qwenEndpoint
+        QwenCoderClient.hfApiKey = hfKey
+        val downloaded = localModelManager.isModelDownloaded(qwenVariant)
+        QwenCoderClient.downloadedModelPath =
+            if (downloaded) localModelManager.getModelFile(qwenVariant).absolutePath else ""
+
         LlmGateway.activeProvider = provider
         LlmGateway.openRouterModelId = orModel
+
+        val dlBytes = localModelManager.getDownloadedSizeBytes(qwenVariant)
+        val dlStatus = if (downloaded) {
+            "Baixado no celular (${LocalModelManager.formatSize(dlBytes)})"
+        } else if (dlBytes > 0L) {
+            "Parcial (${LocalModelManager.formatSize(dlBytes)} / ${LocalModelManager.formatSize(qwenVariant.approxBytes)})"
+        } else {
+            "Não baixado (~${LocalModelManager.formatSize(qwenVariant.approxBytes)})"
+        }
 
         _uiState.update {
             it.copy(
                 llmProvider = provider,
                 openRouterModelId = orModel,
+                qwenVariant = qwenVariant,
+                qwenLocalEndpoint = qwenEndpoint,
+                isQwenModelDownloaded = downloaded,
+                qwenDownloadStatus = dlStatus,
                 hasLlmKey = LlmGateway.isConfigured(),
                 llmStatusLabel = LlmGateway.statusLabel()
             )
@@ -112,32 +241,105 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
 
     fun getStoredGeminiKey(): String = apiKeyStore.getGeminiKey()
     fun getStoredOpenRouterKey(): String = apiKeyStore.getOpenRouterKey()
+    fun getStoredHuggingFaceKey(): String = apiKeyStore.getHuggingFaceKey()
 
     fun saveLlmSettings(
         provider: LlmProvider,
         geminiKey: String,
         openRouterKey: String,
-        openRouterModelId: String
+        openRouterModelId: String,
+        qwenVariant: QwenModelVariant = _uiState.value.qwenVariant,
+        qwenLocalEndpoint: String = _uiState.value.qwenLocalEndpoint,
+        huggingFaceKey: String = getStoredHuggingFaceKey()
     ) {
         apiKeyStore.setProvider(provider)
         apiKeyStore.setGeminiKey(geminiKey)
         apiKeyStore.setOpenRouterKey(openRouterKey)
         apiKeyStore.setOpenRouterModelId(openRouterModelId.ifBlank { LlmProvider.DEFAULT_OPENROUTER_MODEL })
+        apiKeyStore.setQwenVariant(qwenVariant)
+        apiKeyStore.setQwenLocalEndpoint(qwenLocalEndpoint)
+        apiKeyStore.setHuggingFaceKey(huggingFaceKey)
 
-        val gKey = apiKeyStore.resolveGeminiKey()
-        GeminiClient.setApiKey(gKey)
-        OpenRouterClient.setApiKey(apiKeyStore.getOpenRouterKey())
+        applyStoredLlmConfig()
+        _uiState.update {
+            it.copy(apiKeyStatus = "Salvo · ${LlmGateway.statusLabel()}")
+        }
+    }
 
-        LlmGateway.activeProvider = provider
-        LlmGateway.openRouterModelId = apiKeyStore.getOpenRouterModelId()
+    fun downloadQwenModel(variant: QwenModelVariant, hfToken: String = "") {
+        if (_uiState.value.isDownloadingQwenModel) return
+        apiKeyStore.setQwenVariant(variant)
+        if (hfToken.isNotBlank()) apiKeyStore.setHuggingFaceKey(hfToken)
 
         _uiState.update {
             it.copy(
-                llmProvider = provider,
-                openRouterModelId = LlmGateway.openRouterModelId,
-                hasLlmKey = LlmGateway.isConfigured(),
-                llmStatusLabel = LlmGateway.statusLabel(),
-                apiKeyStatus = "Salvo · ${LlmGateway.statusLabel()}"
+                qwenVariant = variant,
+                isDownloadingQwenModel = true,
+                qwenDownloadProgress = 0f,
+                qwenDownloadStatus = "Iniciando download de ${variant.fileName}…"
+            )
+        }
+
+        qwenDownloadJob = viewModelScope.launch {
+            localModelManager.downloadModel(
+                variant = variant,
+                hfToken = hfToken.ifBlank { apiKeyStore.getHuggingFaceKey() },
+                onProgress = { downloaded, total ->
+                    val progress = if (total > 0L) (downloaded.toFloat() / total.toFloat()).coerceIn(0f, 1f) else 0f
+                    _uiState.update {
+                        it.copy(
+                            qwenDownloadProgress = progress,
+                            qwenDownloadStatus = "Baixando: ${LocalModelManager.formatSize(downloaded)} / ${LocalModelManager.formatSize(total)} (${(progress * 100).toInt()}%)"
+                        )
+                    }
+                }
+            ).fold(
+                onSuccess = { file ->
+                    QwenCoderClient.activeVariant = variant
+                    QwenCoderClient.downloadedModelPath = file.absolutePath
+                    _uiState.update {
+                        it.copy(
+                            isDownloadingQwenModel = false,
+                            isQwenModelDownloaded = true,
+                            qwenDownloadProgress = 1f,
+                            qwenDownloadStatus = "Pronto no aparelho: ${file.name} (${LocalModelManager.formatSize(file.length())})",
+                            hasLlmKey = LlmGateway.isConfigured(),
+                            llmStatusLabel = LlmGateway.statusLabel()
+                        )
+                    }
+                },
+                onFailure = { e ->
+                    _uiState.update {
+                        it.copy(
+                            isDownloadingQwenModel = false,
+                            qwenDownloadStatus = "Download pausado/falhou: ${e.message ?: "erro"}"
+                        )
+                    }
+                }
+            )
+        }
+    }
+
+    fun cancelQwenDownload() {
+        qwenDownloadJob?.cancel()
+        qwenDownloadJob = null
+        _uiState.update {
+            it.copy(
+                isDownloadingQwenModel = false,
+                qwenDownloadStatus = "Download pausado (você pode retomar de onde parou)."
+            )
+        }
+    }
+
+    fun deleteDownloadedQwenModel(variant: QwenModelVariant) {
+        cancelQwenDownload()
+        localModelManager.deleteModel(variant)
+        QwenCoderClient.downloadedModelPath = ""
+        _uiState.update {
+            it.copy(
+                isQwenModelDownloaded = false,
+                qwenDownloadProgress = 0f,
+                qwenDownloadStatus = "Modelo removido do aparelho."
             )
         }
     }
@@ -262,6 +464,158 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
     fun setTab(tab: Int) { _uiState.update { it.copy(activeTab = tab) } }
     fun selectFile(file: RepoFile) { _uiState.update { it.copy(selectedFile = file) } }
 
+    /**
+     * Cria um projeto / repositório local do zero diretamente no aparelho a partir de um template.
+     */
+    fun createLocalProject(projectName: String, template: ProjectTemplate) {
+        val cleanName = projectName.trim().ifBlank { "meu-projeto" }
+        viewModelScope.launch {
+            try {
+                val createdPaths = withContext(Dispatchers.IO) {
+                    LocalProjectCreator.createProjectFromTemplate(
+                        workspaceRoot = workspaceDir,
+                        projectName = cleanName,
+                        template = template
+                    )
+                }
+                repositoryBaseline = emptyMap()
+                _uiState.update {
+                    it.copy(
+                        activeRepo = "local/$cleanName",
+                        isLocalOnlyProject = true,
+                        repositoryStatus = "Projeto local '$cleanName' criado (${createdPaths.size} arquivos · ${template.label}). Você já pode editar ou publicar como repositório novo no GitHub."
+                    )
+                }
+                refreshWorkspaceListing(selectPath = createdPaths.firstOrNull())
+                persistCurrentChatSession()
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(repositoryStatus = "Erro ao criar projeto local: ${e.message}")
+                }
+            }
+        }
+    }
+
+    /**
+     * Importa arquivos avulsos ou um pacote .zip inteiro selecionado da memória do celular.
+     */
+    fun importFilesFromDevice(uris: List<Uri>, targetSubfolder: String = "") {
+        if (uris.isEmpty()) return
+        val app = getApplication<Application>()
+        viewModelScope.launch {
+            try {
+                val imported = withContext(Dispatchers.IO) {
+                    LocalProjectCreator.importUrisFromDevice(
+                        context = app,
+                        workspaceRoot = workspaceDir,
+                        uris = uris,
+                        targetSubfolder = targetSubfolder
+                    )
+                }
+                if (repositoryBaseline == null) {
+                    repositoryBaseline = emptyMap()
+                }
+                val currentRepo = _uiState.value.activeRepo.ifBlank { "local/projeto-importado" }
+                _uiState.update {
+                    it.copy(
+                        activeRepo = currentRepo,
+                        isLocalOnlyProject = currentRepo.startsWith("local/"),
+                        repositoryStatus = "Importado(s) ${imported.size} arquivo(s) do celular para o workspace."
+                    )
+                }
+                refreshWorkspaceListing(selectPath = imported.firstOrNull())
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(repositoryStatus = "Falha ao importar do celular: ${e.message}")
+                }
+            }
+        }
+    }
+
+    /**
+     * Publica o projeto local atual criando um repositório NOVO no GitHub (POST /user/repos)
+     * e enviando todos os arquivos do workspace.
+     */
+    fun createGitHubRepoFromWorkspace(
+        repoName: String,
+        description: String,
+        isPrivate: Boolean,
+        token: String
+    ) {
+        if (_uiState.value.isCreatingGitHubRepo) return
+        val effectiveToken = token.trim().ifBlank { sessionToken }
+        if (effectiveToken.isBlank()) {
+            _uiState.update {
+                it.copy(lastCommitStatus = "Informe seu token do GitHub (escopo repo) para criar o repositório.")
+            }
+            return
+        }
+        _uiState.update {
+            it.copy(
+                isCreatingGitHubRepo = true,
+                lastCommitStatus = "Criando repositório '$repoName' no GitHub e enviando arquivos…"
+            )
+        }
+        viewModelScope.launch {
+            try {
+                val filesMap = withContext(Dispatchers.IO) {
+                    val root = workspaceDir.canonicalFile
+                    if (!root.exists()) emptyMap()
+                    else {
+                        root.walkTopDown()
+                            .filter { it.isFile }
+                            .take(50)
+                            .associate { f ->
+                                val rel = f.relativeTo(root).invariantSeparatorsPath
+                                rel to (runCatching { f.readText(Charsets.UTF_8) }.getOrDefault(""))
+                            }
+                    }
+                }
+
+                githubClient.createRepositoryAndPush(
+                    repoName = repoName,
+                    description = description,
+                    isPrivate = isPrivate,
+                    files = filesMap,
+                    token = effectiveToken
+                ).fold(
+                    onSuccess = { created ->
+                        sessionToken = effectiveToken
+                        defaultBranch = created.defaultBranch
+                        repositoryBaseline = filesMap
+                        _uiState.update {
+                            it.copy(
+                                isCreatingGitHubRepo = false,
+                                activeRepo = created.fullName,
+                                isLocalOnlyProject = false,
+                                hasWriteToken = true,
+                                repositoryStatus = "Conectado ao novo repositório ${created.fullName} (${filesMap.size} arquivos publicados)",
+                                lastCommitStatus = "Repositório criado no GitHub: ${created.fullName} (${created.initialCommitSha.take(7)})"
+                            )
+                        }
+                        refreshWorkspaceListing()
+                        persistCurrentChatSession()
+                    },
+                    onFailure = { err ->
+                        _uiState.update {
+                            it.copy(
+                                isCreatingGitHubRepo = false,
+                                lastCommitStatus = err.message ?: "Falha ao criar repositório no GitHub"
+                            )
+                        }
+                    }
+                )
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isCreatingGitHubRepo = false,
+                        lastCommitStatus = e.message ?: "Erro ao preparar arquivos para o GitHub"
+                    )
+                }
+            }
+        }
+    }
+
     fun saveManualFileEdit(relativePath: String, newContent: String) {
         val cleanPath = relativePath.trim().removePrefix("/")
         if (cleanPath.isBlank()) return
@@ -277,6 +631,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                     target.parentFile?.mkdirs()
                     target.writeText(newContent, Charsets.UTF_8)
                 }
+                if (repositoryBaseline == null) repositoryBaseline = emptyMap()
                 refreshWorkspaceListing(selectPath = cleanPath)
                 _uiState.update {
                     it.copy(repositoryStatus = "Arquivo salvo no workspace: $cleanPath")
@@ -352,6 +707,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                     _uiState.update {
                         it.copy(
                             activeRepo = snapshot.fullName,
+                            isLocalOnlyProject = false,
                             repoFiles = files,
                             selectedFile = files.firstOrNull(),
                             isConnectingRepo = false,
@@ -359,6 +715,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                             repositoryStatus = syncSummary
                         )
                     }
+                    persistCurrentChatSession()
                 },
                 onFailure = { err ->
                     _uiState.update {
@@ -394,8 +751,10 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
         val state = _uiState.value
         val repo = state.activeRepo
         val modified = state.repoFiles.filter { it.isModified }
-        if (repo.isBlank()) {
-            _uiState.update { it.copy(lastCommitStatus = "Conecte um repositório antes.") }
+        if (repo.isBlank() || repo.startsWith("local/")) {
+            _uiState.update {
+                it.copy(lastCommitStatus = "Este é um projeto local. Use 'Publicar Novo Repositório no GitHub' logo abaixo.")
+            }
             return
         }
         if (sessionToken.isBlank()) {
@@ -462,8 +821,10 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
 
     fun commitFileToGitHub(path: String, commitMessage: String = "") {
         val repo = _uiState.value.activeRepo
-        if (repo.isBlank()) {
-            _uiState.update { it.copy(lastCommitStatus = "Conecte um repositório antes.") }
+        if (repo.isBlank() || repo.startsWith("local/")) {
+            _uiState.update {
+                it.copy(lastCommitStatus = "Projeto local. Publique primeiro como um repositório no GitHub.")
+            }
             return
         }
         if (sessionToken.isBlank()) {
@@ -511,10 +872,11 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                     messages = it.messages + ChatMessage(
                         id = UUID.randomUUID().toString(),
                         role = MessageRole.SYSTEM,
-                        text = "Configure a API key em Configurações (engrenagem)."
+                        text = "Configure a API key ou baixe o Qwen 2.5 Coder em Configurações (engrenagem)."
                     )
                 )
             }
+            persistCurrentChatSession()
             return
         }
 
@@ -545,6 +907,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                 pendingMutation = null
             )
         }
+        persistCurrentChatSession()
 
         activeJob = viewModelScope.launch {
             try {
@@ -556,6 +919,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                     repositoryFiles = _uiState.value.repoFiles,
                     conversationHistory = priorHistory,
                     confirmMutation = { toolName, path, contentPreview ->
+                        if (repositoryBaseline == null) repositoryBaseline = emptyMap()
                         if (_uiState.value.autoApproveEdits) {
                             refreshWorkspaceListing()
                             return@executeTask true
@@ -619,6 +983,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                             if (event.toolCall.type in setOf(ToolType.EDIT_FILE, ToolType.WRITE_FILE, ToolType.DELETE_FILE)) {
                                 refreshWorkspaceListing()
                             }
+                            persistCurrentChatSession()
                         }
                         is AgentExecutionEvent.MutationProposed -> { }
                         is AgentExecutionEvent.FinalResponseChunk -> {
@@ -634,6 +999,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                                 )
                             }
                             refreshWorkspaceListing()
+                            persistCurrentChatSession()
                         }
                         is AgentExecutionEvent.Error -> {
                             _uiState.update { s ->
@@ -648,6 +1014,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                                 )
                             }
                             refreshWorkspaceListing()
+                            persistCurrentChatSession()
                         }
                     }
                 }
@@ -663,6 +1030,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                         }
                     )
                 }
+                persistCurrentChatSession()
             } finally {
                 activeJob = null
                 mutationDecision = null

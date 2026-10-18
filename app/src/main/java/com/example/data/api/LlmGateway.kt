@@ -3,7 +3,7 @@ package com.example.data.api
 import com.example.data.model.LlmProvider
 
 /**
- * Ponto único de chamada LLM. Roteia para Gemini ou OpenRouter conforme o provedor ativo.
+ * Ponto único de chamada LLM. Roteia para Gemini, OpenRouter ou Qwen 2.5 Coder conforme o provedor ativo.
  */
 object LlmGateway {
 
@@ -16,6 +16,7 @@ object LlmGateway {
     fun isConfigured(): Boolean = when (activeProvider) {
         LlmProvider.GEMINI -> GeminiClient.isApiKeyConfigured()
         LlmProvider.OPENROUTER -> OpenRouterClient.isApiKeyConfigured()
+        LlmProvider.QWEN_CODER -> QwenCoderClient.isConfigured()
     }
 
     suspend fun query(
@@ -33,6 +34,10 @@ object LlmGateway {
             modelId = openRouterModelId,
             systemInstruction = systemInstruction
         )
+        LlmProvider.QWEN_CODER -> QwenCoderClient.chat(
+            prompt = prompt,
+            systemInstruction = systemInstruction
+        )
     }
 
     fun statusLabel(): String = when (activeProvider) {
@@ -41,6 +46,11 @@ object LlmGateway {
             "OpenRouter · $openRouterModelId"
         } else {
             "OpenRouter sem key"
+        }
+        LlmProvider.QWEN_CODER -> {
+            val tag = QwenCoderClient.activeVariant.fileName.substringBefore("-instruct")
+            if (QwenCoderClient.downloadedModelPath.isNotBlank()) "Qwen Local · $tag"
+            else "Qwen 2.5 Coder · $tag"
         }
     }
 }

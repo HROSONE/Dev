@@ -25,7 +25,7 @@ import com.example.data.model.*
 import com.example.ui.theme.*
 
 /**
- * Barra superior enxuta: modo + toggle autônomo (em BUILD) + repo + velocidade.
+ * Barra superior enxuta: modo + toggle autônomo (em BUILD) + histórico + projeto/repo + velocidade.
  */
 @Composable
 fun AgentModeSelector(
@@ -37,15 +37,16 @@ fun AgentModeSelector(
     onSelectRepoClick: () -> Unit,
     autoApproveEdits: Boolean = true,
     onToggleAutoApprove: () -> Unit = {},
+    onOpenHistoryClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
             .background(DarkBackground)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+            .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
+        horizontalArrangement = Arrangement.spacedBy(5.dp)
     ) {
         // Segmento de modo compacto
         Row(
@@ -88,32 +89,49 @@ fun AgentModeSelector(
                         else AccentYellow.copy(alpha = 0.18f)
                     )
                     .clickable { onToggleAutoApprove() }
-                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                    .padding(horizontal = 7.dp, vertical = 6.dp)
                     .testTag("toggle_auto_approve"),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     if (autoApproveEdits) "⚡ Auto" else "🔒 Diff",
-                    fontSize = 11.sp,
+                    fontSize = 10.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = if (autoApproveEdits) AccentGreen else AccentYellow
                 )
             }
         }
 
-        // Repo: ícone único
+        // Botão de Histórico de Conversas
+        IconButton(
+            onClick = onOpenHistoryClick,
+            modifier = Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(DarkSurface)
+                .testTag("open_history_button")
+        ) {
+            Icon(
+                Icons.Default.History,
+                contentDescription = "Histórico de Conversas",
+                tint = AccentCyan,
+                modifier = Modifier.size(16.dp)
+            )
+        }
+
+        // Repo / Projeto Local
         IconButton(
             onClick = onSelectRepoClick,
             modifier = Modifier
-                .size(34.dp)
+                .size(32.dp)
                 .clip(CircleShape)
                 .background(DarkSurface)
         ) {
             Icon(
                 Icons.Default.FolderOpen,
-                contentDescription = "Repositório",
+                contentDescription = "Projeto / Repositório",
                 tint = if (activeRepo.isBlank()) TextMuted else AccentGreen,
-                modifier = Modifier.size(17.dp)
+                modifier = Modifier.size(16.dp)
             )
         }
 
@@ -123,7 +141,7 @@ fun AgentModeSelector(
             IconButton(
                 onClick = { speedMenu = true },
                 modifier = Modifier
-                    .size(34.dp)
+                    .size(32.dp)
                     .clip(CircleShape)
                     .background(DarkSurface)
             ) {
@@ -131,7 +149,7 @@ fun AgentModeSelector(
                     if (selectedSpeed == ReasoningSpeed.FAST) Icons.Default.Bolt else Icons.Default.Psychology,
                     contentDescription = "Velocidade",
                     tint = TextSecondary,
-                    modifier = Modifier.size(17.dp)
+                    modifier = Modifier.size(16.dp)
                 )
             }
             DropdownMenu(

@@ -13,13 +13,15 @@ enum class ReasoningSpeed(val label: String, val modelName: String, val badge: S
 
 enum class LlmProvider(val label: String) {
     GEMINI("Google Gemini"),
-    OPENROUTER("OpenRouter")
+    OPENROUTER("OpenRouter"),
+    QWEN_CODER("Qwen 2.5 Coder")
     ;
 
     companion object {
-        const val DEFAULT_OPENROUTER_MODEL = "qwen/qwen3.8-27b:free"
+        const val DEFAULT_OPENROUTER_MODEL = "qwen/qwen-2.5-coder-32b-instruct"
 
         val openRouterPresets: List<OpenRouterModelPreset> = listOf(
+            OpenRouterModelPreset("Qwen 2.5 Coder 32B", "qwen/qwen-2.5-coder-32b-instruct", free = false),
             OpenRouterModelPreset("Qwen 3.8 27B (free)", "qwen/qwen3.8-27b:free", free = true),
             OpenRouterModelPreset("DeepSeek V4.1 Flash", "deepseek/deepseek-v4.1-flash", free = false),
             OpenRouterModelPreset("DeepSeek V4 Flash", "deepseek/deepseek-v4-flash", free = false),
@@ -31,6 +33,58 @@ enum class LlmProvider(val label: String) {
         )
     }
 }
+
+enum class QwenModelVariant(
+    val label: String,
+    val fileName: String,
+    val downloadUrl: String,
+    val approxBytes: Long,
+    val hfModelId: String
+) {
+    QWEN_0_5B(
+        label = "Qwen 2.5 Coder 0.5B Instruct (Q4_K_M · ~398 MB)",
+        fileName = "qwen2.5-coder-0.5b-instruct-q4_k_m.gguf",
+        downloadUrl = "https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf",
+        approxBytes = 398_000_000L,
+        hfModelId = "Qwen/Qwen2.5-Coder-1.5B-Instruct"
+    ),
+    QWEN_1_5B(
+        label = "Qwen 2.5 Coder 1.5B Instruct (Q4_K_M · ~1.1 GB)",
+        fileName = "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+        downloadUrl = "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+        approxBytes = 1_120_000_000L,
+        hfModelId = "Qwen/Qwen2.5-Coder-1.5B-Instruct"
+    ),
+    QWEN_3B(
+        label = "Qwen 2.5 Coder 3B Instruct (Q4_K_M · ~2.0 GB)",
+        fileName = "qwen2.5-coder-3b-instruct-q4_k_m.gguf",
+        downloadUrl = "https://huggingface.co/Qwen/Qwen2.5-Coder-3B-Instruct-GGUF/resolve/main/qwen2.5-coder-3b-instruct-q4_k_m.gguf",
+        approxBytes = 2_050_000_000L,
+        hfModelId = "Qwen/Qwen2.5-Coder-7B-Instruct"
+    ),
+    QWEN_7B(
+        label = "Qwen 2.5 Coder 7B Instruct (Q4_K_M · ~4.7 GB)",
+        fileName = "qwen2.5-coder-7b-instruct-q4_k_m.gguf",
+        downloadUrl = "https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q4_k_m.gguf",
+        approxBytes = 4_700_000_000L,
+        hfModelId = "Qwen/Qwen2.5-Coder-7B-Instruct"
+    )
+}
+
+enum class ProjectTemplate(val label: String, val description: String) {
+    BLANK("Projeto em Branco", "README.md e .gitignore prontos para começar"),
+    ANDROID_COMPOSE("App Android (Kotlin + Compose)", "Estrutura Gradle Kotlin DSL + MainActivity Compose"),
+    PYTHON_APP("Projeto Python", "main.py, requirements.txt e .gitignore"),
+    WEB_APP("Web App (HTML / CSS / JS)", "index.html, styles.css e app.js interativos")
+}
+
+data class ChatSessionSummary(
+    val id: String,
+    val title: String,
+    val updatedAt: Long,
+    val activeRepo: String,
+    val messageCount: Int
+)
 
 data class OpenRouterModelPreset(
     val label: String,

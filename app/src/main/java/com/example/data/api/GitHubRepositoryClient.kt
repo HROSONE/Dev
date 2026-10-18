@@ -3,6 +3,7 @@ package com.example.data.api
 import android.net.Uri
 import android.util.Base64
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import okhttp3.MediaType.Companion.toMediaType
@@ -16,8 +17,8 @@ import java.util.concurrent.TimeUnit
 /**
  * GitHub REST client.
  *
- * Tokens are supplied by the caller and are never persisted by this class.
- * Writes require an explicit token with contents:write scope.
+ * Supports reading existing repositories, creating new repositories on GitHub,
+ * and committing single or multiple workspace files atomically.
  */
 class GitHubRepositoryClient(
     private val http: OkHttpClient = OkHttpClient.Builder()
@@ -44,6 +45,78 @@ class GitHubRepositoryClient(
         val htmlUrl: String,
         val message: String
     )
+
+    data class CreatedRepositoryResult(
+        val fullName: String,
+        val defaultBranch: String,
+        val htmlUrl: String,
+        val initialCommitSha: String
+    )
+
+    /**
+     * Cria um repositório novo na conta autenticada do GitHub (POST /user/repos)
+     * com auto_init=true e já envia todos os arquivos do workspace local em um commit inicial.
+     */
+    suspend fun createRepositoryAndPush(
+        repoName: String,
+        description: String = "",
+        isPrivate: Boolean = false,
+        files: Map<String, String>,
+        token: String
+    ): Result<CreatedRepositoryResult> = withContext(Dispatchers.IO) {
+        runCatching {
+            val authToken = token.trim()
+            if (authToken.isBlank()) {
+                throw IOException("Informe um Personal Access Token do GitHub (escopo repo) para criar um repositório novo.")
+            }
+            val cleanName = repoName.trim().substringAfterLast('/')
+                .replace(Regex("[^A-Za-z0-9_.-]"), "-")
+                .trim('-')
+            if (cleanName.isBlank()) {
+                throw IllegalArgumentException("Informe um nome válido para o novo repositório.")
+            }
+
+            val createPayload = JSONObject().apply {
+                put("name", cleanName)
+                put("description", description.trim().ifBlank { "Repositório criado e gerenciado pelo DevAgent Android" })
+                put("private", isPrivate)
+                put("auto_init", true)
+            }
+
+            val createdRepo = requestJson(
+                method = "POST",
+                url = "https://api.github.com/user/repos",
+                token = authToken,
+                payload = createPayload
+            )
+
+            val fullName = createdRepo.getString("full_name")
+            val defaultBranch = createdRepo.optString("default_branch", "main").ifBlank { "main" }
+            val htmlUrl = createdRepo.optString("html_url", "https://github.com/$fullName")
+
+            // Aguarda brevemente o GitHub finalizar o commit auto_init na branch padrão
+            delay(1_200)
+
+            var commitSha = ""
+            if (files.isNotEmpty()) {
+                val pushResult = commitFiles(
+                    repositoryFullName = fullName,
+                    files = files.entries.take(MAX_BATCH_FILES).associate { it.key to it.value },
+                    commitMessage = "feat: initial project upload from DevAgent",
+                    token = authToken,
+                    branch = defaultBranch
+                ).getOrThrow()
+                commitSha = pushResult.commitSha
+            }
+
+            CreatedRepositoryResult(
+                fullName = fullName,
+                defaultBranch = defaultBranch,
+                htmlUrl = htmlUrl,
+                initialCommitSha = commitSha
+            )
+        }
+    }
 
     suspend fun readRepository(
         repositoryInput: String,

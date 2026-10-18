@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -26,6 +25,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.RepoFile
@@ -35,19 +35,24 @@ import com.example.ui.theme.*
 @Composable
 fun SandboxWorkspaceScreen(
     activeRepo: String,
+    isLocalOnlyProject: Boolean = false,
     repositoryStatus: String = "",
     files: List<RepoFile>,
     selectedFile: RepoFile?,
     onSelectFile: (RepoFile) -> Unit,
     onSaveFile: (path: String, content: String) -> Unit = { _, _ -> },
     onRevertFile: (path: String) -> Unit = {},
+    onImportFromDeviceClick: () -> Unit = {},
+    onOpenNewProjectClick: () -> Unit = {},
     terminalLogs: List<String> = emptyList(),
     onRunCommand: (String) -> Unit = {},
     hasWriteToken: Boolean = false,
     isCommitting: Boolean = false,
+    isCreatingGitHubRepo: Boolean = false,
     lastCommitStatus: String = "",
     onCommitFile: (String) -> Unit = {},
     onCommitModifiedFiles: (String) -> Unit = {},
+    onCreateGitHubRepo: (name: String, description: String, isPrivate: Boolean, token: String) -> Unit = { _, _, _, _ -> },
     modifier: Modifier = Modifier
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -59,6 +64,13 @@ fun SandboxWorkspaceScreen(
     var showNewFileDialog by remember { mutableStateOf(false) }
     var newFilePath by remember { mutableStateOf("") }
     var commitMessageInput by remember { mutableStateOf("") }
+
+    var newGhRepoName by remember(activeRepo) {
+        mutableStateOf(activeRepo.removePrefix("local/").substringAfterLast('/').ifBlank { "meu-app-devagent" })
+    }
+    var newGhRepoDesc by remember { mutableStateOf("Projeto criado no DevAgent Android") }
+    var newGhRepoPrivate by remember { mutableStateOf(false) }
+    var newGhTokenInput by remember { mutableStateOf("") }
 
     if (showNewFileDialog) {
         AlertDialog(
@@ -107,11 +119,11 @@ fun SandboxWorkspaceScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(DarkSurface)
-                .padding(12.dp),
+                .padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                 Icon(
                     imageVector = Icons.Default.Inventory2,
                     contentDescription = null,
@@ -127,42 +139,38 @@ fun SandboxWorkspaceScreen(
                         color = TextPrimary
                     )
                     Text(
-                        text = activeRepo.ifBlank { "Nenhum repo conectado" },
+                        text = activeRepo.ifBlank { "Nenhum projeto aberto" },
                         fontSize = 11.sp,
-                        color = if (activeRepo.isBlank()) TextMuted else AccentGreen
+                        color = when {
+                            activeRepo.isBlank() -> TextMuted
+                            isLocalOnlyProject || activeRepo.startsWith("local/") -> AccentYellow
+                            else -> AccentGreen
+                        }
                     )
                 }
             }
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 TextButton(
                     onClick = { showNewFileDialog = true },
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
                 ) {
-                    Text("+ Novo", fontSize = 11.sp, color = AccentCyan, fontWeight = FontWeight.SemiBold)
+                    Text("+ Arquivo", fontSize = 10.sp, color = AccentCyan, fontWeight = FontWeight.SemiBold)
                 }
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(DarkSurfaceVariant)
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                TextButton(
+                    onClick = onImportFromDeviceClick,
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(6.dp)
-                            .clip(CircleShape)
-                            .background(AccentGreen)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "grep · tree · cat",
-                        fontSize = 10.sp,
-                        color = TextPrimary
-                    )
+                    Text("📱 Celular", fontSize = 10.sp, color = AccentGreen, fontWeight = FontWeight.SemiBold)
+                }
+                TextButton(
+                    onClick = onOpenNewProjectClick,
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text("✨ Novo Projeto", fontSize = 10.sp, color = AccentPurple, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -202,7 +210,7 @@ fun SandboxWorkspaceScreen(
                 onClick = { selectedTab = 2 },
                 text = {
                     Text(
-                        if (modifiedCount > 0) "Commit ($modifiedCount)" else "Commit",
+                        if (modifiedCount > 0) "GitHub ($modifiedCount)" else "GitHub",
                         fontSize = 12.sp
                     )
                 }
@@ -290,7 +298,7 @@ fun SandboxWorkspaceScreen(
                                         }
                                     }
                                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        if (selectedFile.isModified && !isEditing) {
+                                        if (selectedFile.isModified && !isEditing && !isLocalOnlyProject) {
                                             TextButton(
                                                 onClick = { onRevertFile(selectedFile.path) },
                                                 contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
@@ -366,12 +374,16 @@ fun SandboxWorkspaceScreen(
                                 }
                             }
                         } else {
-                            Text(
-                                text = "Selecione um arquivo",
-                                fontSize = 12.sp,
-                                color = TextMuted,
-                                modifier = Modifier.align(Alignment.Center)
-                            )
+                            Column(
+                                modifier = Modifier.align(Alignment.Center),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = "Selecione um arquivo, importe do celular ou crie um projeto local.",
+                                    fontSize = 12.sp,
+                                    color = TextMuted
+                                )
+                            }
                         }
                     }
                 }
@@ -467,26 +479,121 @@ fun SandboxWorkspaceScreen(
                         .fillMaxSize()
                         .padding(14.dp)
                         .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    // Seção 1: Criar Repositório NOVO no GitHub a partir do projeto local
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(DarkSurfaceVariant)
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "🚀 Criar Repositório Novo no GitHub",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = AccentCyan
+                        )
+                        Text(
+                            text = "Transforme seu projeto local (${files.size} arquivo(s) no workspace) em um repositório novo no seu GitHub:",
+                            fontSize = 11.sp,
+                            color = TextSecondary
+                        )
+                        OutlinedTextField(
+                            value = newGhRepoName,
+                            onValueChange = { newGhRepoName = it },
+                            label = { Text("Nome do novo repositório") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = TextPrimary,
+                                unfocusedTextColor = TextPrimary,
+                                focusedBorderColor = AccentCyan,
+                                unfocusedBorderColor = DarkBorder
+                            )
+                        )
+                        OutlinedTextField(
+                            value = newGhRepoDesc,
+                            onValueChange = { newGhRepoDesc = it },
+                            label = { Text("Descrição (opcional)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = TextPrimary,
+                                unfocusedTextColor = TextPrimary,
+                                focusedBorderColor = AccentCyan,
+                                unfocusedBorderColor = DarkBorder
+                            )
+                        )
+                        if (!hasWriteToken) {
+                            OutlinedTextField(
+                                value = newGhTokenInput,
+                                onValueChange = { newGhTokenInput = it },
+                                label = { Text("Token GitHub (escopo repo)") },
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation(),
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = TextPrimary,
+                                    unfocusedTextColor = TextPrimary,
+                                    focusedBorderColor = AccentCyan,
+                                    unfocusedBorderColor = DarkBorder
+                                )
+                            )
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(
+                                checked = newGhRepoPrivate,
+                                onCheckedChange = { newGhRepoPrivate = it }
+                            )
+                            Text("Repositório Privado", fontSize = 12.sp, color = TextPrimary)
+                        }
+                        Button(
+                            onClick = {
+                                onCreateGitHubRepo(
+                                    newGhRepoName,
+                                    newGhRepoDesc,
+                                    newGhRepoPrivate,
+                                    newGhTokenInput
+                                )
+                            },
+                            enabled = !isCreatingGitHubRepo && newGhRepoName.isNotBlank() && files.isNotEmpty(),
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
+                        ) {
+                            Text(
+                                if (isCreatingGitHubRepo) "Criando e publicando…"
+                                else "Criar Repositório no GitHub e Publicar (${files.size} arq.)",
+                                fontSize = 11.sp,
+                                color = DarkBackground,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(color = DarkBorder)
+
+                    // Seção 2: Commit em repositório GitHub existente
                     Text(
-                        text = "Commit no GitHub",
-                        fontSize = 14.sp,
+                        text = "Commit em Repositório Conectado ($activeRepo)",
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         color = TextPrimary
                     )
                     Text(
-                        text = if (hasWriteToken) {
-                            "Token de sessão presente. Você pode enviar todos os arquivos modificados em um único commit atômico."
+                        text = if (hasWriteToken && !isLocalOnlyProject) {
+                            "Token de sessão ativo. Envie os arquivos modificados em um único commit atômico."
                         } else {
-                            "Conecte o repositório com um token (contents:write) para habilitar commit."
+                            "Conecte um repositório existente com token (contents:write) ou publique um repositório novo acima."
                         },
-                        fontSize = 12.sp,
+                        fontSize = 11.sp,
                         color = TextSecondary
                     )
 
                     val modified = files.filter { it.isModified }
-                    if (modified.isNotEmpty()) {
+                    if (modified.isNotEmpty() && !isLocalOnlyProject) {
                         OutlinedTextField(
                             value = commitMessageInput,
                             onValueChange = { commitMessageInput = it },
@@ -513,13 +620,11 @@ fun SandboxWorkspaceScreen(
                                 fontWeight = FontWeight.Bold
                             )
                         }
-                        if (modified.size > 50) {
-                            Text("O limite por commit é de 50 arquivos.", fontSize = 11.sp, color = AccentYellow)
-                        }
                     }
+
                     if (modified.isEmpty()) {
                         Text(
-                            text = "Nenhum arquivo modificado no workspace.",
+                            text = "Nenhum arquivo modificado pendente.",
                             fontSize = 12.sp,
                             color = TextMuted
                         )
@@ -541,17 +646,19 @@ fun SandboxWorkspaceScreen(
                                     color = TextPrimary,
                                     modifier = Modifier.weight(1f)
                                 )
-                                Button(
-                                    onClick = { onCommitFile(file.path) },
-                                    enabled = hasWriteToken && !isCommitting,
-                                    colors = ButtonDefaults.buttonColors(containerColor = AccentGreen),
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
-                                ) {
-                                    Text(
-                                        if (isCommitting) "…" else "Commit",
-                                        fontSize = 11.sp,
-                                        color = DarkBackground
-                                    )
+                                if (!isLocalOnlyProject) {
+                                    Button(
+                                        onClick = { onCommitFile(file.path) },
+                                        enabled = hasWriteToken && !isCommitting,
+                                        colors = ButtonDefaults.buttonColors(containerColor = AccentGreen),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(
+                                            if (isCommitting) "…" else "Commit",
+                                            fontSize = 11.sp,
+                                            color = DarkBackground
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -561,7 +668,7 @@ fun SandboxWorkspaceScreen(
                         Text(
                             text = lastCommitStatus,
                             fontSize = 11.sp,
-                            color = if (lastCommitStatus.startsWith("Commit OK")) AccentGreen else AccentYellow
+                            color = if (lastCommitStatus.startsWith("Commit OK") || lastCommitStatus.startsWith("Repositório criado")) AccentGreen else AccentYellow
                         )
                     }
                 }
