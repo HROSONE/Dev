@@ -1,7 +1,11 @@
 package com.example.data.engine
 
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
+import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -71,23 +75,28 @@ class WorkspaceCommandRunner(
             throw IOException("Não foi possível iniciar '$executable' neste dispositivo: ${e.message}", e)
         }
 
-        val output = StringBuilder()
+        val output = ByteArrayOutputStream(minOf(maxOutputBytes, 8_192))
         val truncated = AtomicBoolean(false)
         val reader = Thread {
             process.inputStream.use { stream ->
-                val buffer = ByteArray(1024)
+                val buffer = ByteArray(1_024)
                 while (true) {
                     val count = stream.read(buffer)
                     if (count < 0) break
+                    var overflow = false
                     synchronized(output) {
-                        val remaining = maxOutputBytes - output.length
-                        if (remaining > 0) {
-                            output.append(String(buffer, 0, minOf(count, remaining), Charsets.UTF_8))
-                        }
-                        if (count > remaining) {
+                        val remaining = maxOutputBytes - output.size()
+                        val accepted = minOf(count, remaining.coerceAtLeast(0))
+                        if (accepted > 0) output.write(buffer, 0, accepted)
+                        if (accepted < count) {
                             truncated.set(true)
-                            process.destroy()
+                            overflow = true
                         }
+                    }
+                    if (overflow) {
+                        // Stop a command that produces more output than we can safely retain.
+                        process.destroyForcibly()
+                        break
                     }
                 }
             }
@@ -97,20 +106,47 @@ class WorkspaceCommandRunner(
             start()
         }
 
-        val finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
+        val finished = try {
+            process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
+        } finally {
+            // If waitFor itself is interrupted, do not leave the child process running.
+            if (Thread.currentThread().isInterrupted) process.destroyForcibly()
+        }
         if (!finished) {
             process.destroyForcibly()
             process.waitFor(1, TimeUnit.SECONDS)
         }
         reader.join(1_000)
-        val text = synchronized(output) { output.toString() }
+        if (reader.isAlive) {
+            process.destroyForcibly()
+            runCatching { process.inputStream.close() }
+            reader.join(1_000)
+        }
+
+        val bytes = synchronized(output) { output.toByteArray() }
         return CommandResult(
             command = resolvedArgs.joinToString(" "),
-            exitCode = if (finished) process.exitValue() else null,
-            output = text,
+            exitCode = if (finished && !truncated.get()) process.exitValue() else null,
+            output = decodeCompleteUtf8(bytes),
             timedOut = !finished,
             outputTruncated = truncated.get()
         )
+    }
+
+    /** Decode only complete UTF-8 code points when the byte limit cuts through a character. */
+    private fun decodeCompleteUtf8(bytes: ByteArray): String {
+        val decoder = StandardCharsets.UTF_8.newDecoder()
+            .onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT)
+        var length = bytes.size
+        while (length >= 0) {
+            try {
+                return decoder.reset().decode(ByteBuffer.wrap(bytes, 0, length)).toString()
+            } catch (_: java.nio.charset.CharacterCodingException) {
+                length--
+            }
+        }
+        return ""
     }
 
     private fun resolveWorkspacePath(relative: String, mustExist: Boolean): File {
