@@ -241,7 +241,7 @@ class AppUpdateChecker(
     }
 
     private fun parseVersionCode(tag: String, releaseBody: String): Int {
-        Regex("versionCode\s*[=:]\s*(\d+)", RegexOption.IGNORE_CASE)
+        Regex("versionCode\\s*[=:]\\s*(\\d+)", RegexOption.IGNORE_CASE)
             .find(releaseBody)?.groupValues?.getOrNull(1)?.toIntOrNull()
             ?.let { return it }
 
