@@ -79,7 +79,7 @@ class AgentToolCoordinatorTest {
             ChatIntent.IMPLEMENTATION_REQUEST
         )
 
-        assertEquals(AgentToolExecution.NeedsConfirmation("write_file", "new.txt"), result)
+        assertEquals(AgentToolExecution.NeedsConfirmation("write_file", "new.txt", "safe"), result)
         assertFalse(File(root, "new.txt").exists())
     }
 
