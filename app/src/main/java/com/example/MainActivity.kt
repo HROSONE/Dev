@@ -80,6 +80,7 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
     var selectedQwenVariant by remember { mutableStateOf(QwenModelVariant.QWEN_1_5B) }
     var qwenEndpointInput by remember { mutableStateOf("") }
     var hfTokenInput by remember { mutableStateOf("") }
+    var settingsGhTokenInput by remember { mutableStateOf("") }
     var showKeysPlain by remember { mutableStateOf(false) }
 
     val deviceFilePicker = rememberLauncherForActivityResult(
@@ -192,7 +193,7 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
         )
     }
 
-    // Diálogo de Configurações (Gemini, OpenRouter e Qwen 2.5 Coder Local/Cloud)
+    // Diálogo de Configurações (Gemini, OpenRouter, Qwen 2.5 Coder e Token GitHub)
     if (showSettingsDialog) {
         LaunchedEffect(Unit) {
             settingsProvider = uiState.llmProvider
@@ -202,6 +203,7 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
             selectedQwenVariant = uiState.qwenVariant
             qwenEndpointInput = uiState.qwenLocalEndpoint
             hfTokenInput = viewModel.getStoredHuggingFaceKey()
+            settingsGhTokenInput = viewModel.getStoredGitHubToken()
         }
         AlertDialog(
             onDismissRequest = { showSettingsDialog = false },
@@ -389,6 +391,23 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                             )
                         }
                     }
+                    Spacer(Modifier.height(12.dp))
+                    Text("Token GitHub (Repos Privados & Auto-Update)", fontSize = 12.sp, color = TextPrimary)
+                    Spacer(Modifier.height(4.dp))
+                    OutlinedTextField(
+                        value = settingsGhTokenInput,
+                        onValueChange = { settingsGhTokenInput = it },
+                        label = { Text("ghp_… / github_pat_…") },
+                        singleLine = true,
+                        visualTransformation = if (showKeysPlain) VisualTransformation.None else PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = TextPrimary,
+                            unfocusedTextColor = TextPrimary,
+                            focusedBorderColor = AccentCyan,
+                            unfocusedBorderColor = DarkBorder
+                        )
+                    )
                     Spacer(Modifier.height(10.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = showKeysPlain, onCheckedChange = { showKeysPlain = it })
@@ -397,10 +416,10 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                     if (uiState.apiKeyStatus.isNotBlank()) {
                         Text(uiState.apiKeyStatus, fontSize = 11.sp, color = AccentCyan)
                     }
-                    Spacer(Modifier.height(16.dp))
+                    Spacer(Modifier.height(14.dp))
                     HorizontalDivider(color = DarkBorder)
                     Spacer(Modifier.height(10.dp))
-                    Text("Atualização", fontSize = 13.sp, color = TextPrimary)
+                    Text("Atualização (HROSONE/Dev)", fontSize = 13.sp, color = TextPrimary)
                     Spacer(Modifier.height(4.dp))
                     Text(
                         uiState.updateStatus.ifBlank { "Releases em HROSONE/Dev" },
@@ -410,7 +429,21 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                     Spacer(Modifier.height(8.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TextButton(
-                            onClick = { viewModel.checkForAppUpdate() },
+                            onClick = {
+                                if (settingsGhTokenInput.isNotBlank()) {
+                                    viewModel.saveLlmSettings(
+                                        provider = settingsProvider,
+                                        geminiKey = geminiKeyInput,
+                                        openRouterKey = openRouterKeyInput,
+                                        openRouterModelId = selectedOrModel,
+                                        qwenVariant = selectedQwenVariant,
+                                        qwenLocalEndpoint = qwenEndpointInput,
+                                        huggingFaceKey = hfTokenInput,
+                                        gitHubToken = settingsGhTokenInput
+                                    )
+                                }
+                                viewModel.checkForAppUpdate()
+                            },
                             enabled = !uiState.isCheckingUpdate
                         ) {
                             Text(if (uiState.isCheckingUpdate) "…" else "Verificar", color = AccentCyan)
@@ -439,7 +472,8 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                             openRouterModelId = selectedOrModel,
                             qwenVariant = selectedQwenVariant,
                             qwenLocalEndpoint = qwenEndpointInput,
-                            huggingFaceKey = hfTokenInput
+                            huggingFaceKey = hfTokenInput,
+                            gitHubToken = settingsGhTokenInput
                         )
                         showSettingsDialog = false
                     },
@@ -544,7 +578,7 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                             OutlinedTextField(
                                 value = githubTokenText,
                                 onValueChange = { githubTokenText = it },
-                                label = { Text("Token GitHub (opcional · contents:write)") },
+                                label = { Text("Token GitHub (salvo em Configurações se vazio)") },
                                 singleLine = true,
                                 visualTransformation = PasswordVisualTransformation(),
                                 enabled = !uiState.isConnectingRepo,
@@ -559,7 +593,7 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                         }
                         1 -> {
                             Text(
-                                "Crie um repositório inteiro novo dentro do próprio DevAgent (depois você pode publicá-lo como repositório novo no GitHub na aba Commit):",
+                                "Crie um repositório inteiro novo dentro do próprio DevAgent (depois você pode publicá-lo como repositório novo no GitHub na aba GitHub):",
                                 fontSize = 11.sp,
                                 color = TextSecondary
                             )

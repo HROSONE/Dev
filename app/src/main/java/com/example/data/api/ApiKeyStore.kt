@@ -6,7 +6,7 @@ import com.example.data.model.LlmProvider
 import com.example.data.model.QwenModelVariant
 
 /**
- * Segredos e preferências de LLM (SharedPreferences privado).
+ * Segredos e preferências de LLM e GitHub (SharedPreferences privado).
  */
 class ApiKeyStore(context: Context) {
 
@@ -54,6 +54,14 @@ class ApiKeyStore(context: Context) {
 
     fun clearOpenRouterKey() {
         prefs.edit().remove(KEY_OPENROUTER).apply()
+    }
+
+    // --- GitHub Token (necessário para repos privados e auto-update em repo privado) ---
+    fun getGitHubToken(): String =
+        prefs.getString(KEY_GITHUB_TOKEN, "").orEmpty().trim()
+
+    fun setGitHubToken(token: String) {
+        prefs.edit().putString(KEY_GITHUB_TOKEN, token.trim()).apply()
     }
 
     // --- Qwen 2.5 Coder (Local GGUF / HuggingFace) ---
@@ -119,6 +127,7 @@ class ApiKeyStore(context: Context) {
         private const val PREFS_NAME = "devagent_secrets"
         private const val KEY_GEMINI = "gemini_api_key"
         private const val KEY_OPENROUTER = "openrouter_api_key"
+        private const val KEY_GITHUB_TOKEN = "github_pat_token"
         private const val KEY_PROVIDER = "llm_provider"
         private const val KEY_OR_MODEL = "openrouter_model_id"
         private const val KEY_QWEN_VARIANT = "qwen_coder_variant"

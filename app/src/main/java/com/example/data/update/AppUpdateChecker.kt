@@ -19,14 +19,15 @@ data class AppUpdateInfo(
     val versionName: String,
     val versionCode: Int,
     val apkUrl: String,
+    val assetApiUrl: String = "",
     val releaseNotes: String,
     val htmlUrl: String
 )
 
 /**
  * Auto-update via GitHub Releases (HROSONE/Dev).
- * Tags no formato v1.1.<run_number>; o body da release deve conter
- * "versionCode=<n>" (o workflow Build APK já grava isso).
+ * Suporta tanto repositórios públicos quanto privados (autenticando via Bearer token
+ * e baixando o asset com Accept: application/octet-stream pela API do GitHub).
  */
 class AppUpdateChecker(
     private val owner: String = "HROSONE",
@@ -34,21 +35,32 @@ class AppUpdateChecker(
     private val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .followSslRedirects(true)
         .build()
 ) {
 
-    suspend fun checkForUpdate(): Result<AppUpdateInfo?> = withContext(Dispatchers.IO) {
+    suspend fun checkForUpdate(githubToken: String = ""): Result<AppUpdateInfo?> = withContext(Dispatchers.IO) {
         runCatching {
-            val request = Request.Builder()
+            val cleanToken = githubToken.trim()
+            val reqBuilder = Request.Builder()
                 .url("https://api.github.com/repos/$owner/$repo/releases/latest")
                 .header("Accept", "application/vnd.github+json")
                 .header("X-GitHub-Api-Version", "2022-11-28")
                 .header("User-Agent", "DevAgent/${BuildConfig.VERSION_NAME}")
                 .get()
-                .build()
 
-            http.newCall(request).execute().use { response ->
-                if (response.code == 404) return@runCatching null
+            if (cleanToken.isNotBlank()) {
+                reqBuilder.header("Authorization", "Bearer $cleanToken")
+            }
+
+            http.newCall(reqBuilder.build()).execute().use { response ->
+                if (response.code == 404) {
+                    if (cleanToken.isBlank()) {
+                        throw Exception("Repositório $owner/$repo privado (HTTP 404). Salve seu token GitHub em Configurações para buscar atualizações.")
+                    }
+                    return@runCatching null
+                }
                 if (!response.isSuccessful) {
                     throw Exception("GitHub releases HTTP ${response.code}")
                 }
@@ -59,16 +71,18 @@ class AppUpdateChecker(
                 val htmlUrl = json.optString("html_url")
                 val assets = json.optJSONArray("assets") ?: return@runCatching null
 
-                var apkUrl = ""
+                var browserDownloadUrl = ""
+                var assetApiUrl = ""
                 for (i in 0 until assets.length()) {
                     val asset = assets.optJSONObject(i) ?: continue
                     val name = asset.optString("name").lowercase()
                     if (name.endsWith(".apk")) {
-                        apkUrl = asset.optString("browser_download_url")
+                        browserDownloadUrl = asset.optString("browser_download_url")
+                        assetApiUrl = asset.optString("url")
                         if (name.contains("devagent") || name.contains("debug")) break
                     }
                 }
-                if (apkUrl.isBlank()) return@runCatching null
+                if (browserDownloadUrl.isBlank() && assetApiUrl.isBlank()) return@runCatching null
 
                 val remoteCode = parseVersionCode(tag, notes)
                 if (remoteCode <= BuildConfig.VERSION_CODE) return@runCatching null
@@ -77,7 +91,8 @@ class AppUpdateChecker(
                     tagName = tag,
                     versionName = tag.ifBlank { "$remoteCode" },
                     versionCode = remoteCode,
-                    apkUrl = apkUrl,
+                    apkUrl = browserDownloadUrl.ifBlank { assetApiUrl },
+                    assetApiUrl = assetApiUrl,
                     releaseNotes = notes.take(2_000),
                     htmlUrl = htmlUrl
                 )
@@ -88,15 +103,31 @@ class AppUpdateChecker(
     suspend fun downloadApk(
         context: Context,
         url: String,
+        assetApiUrl: String = "",
+        githubToken: String = "",
         onProgress: ((downloaded: Long, total: Long) -> Unit)? = null
     ): Result<File> = withContext(Dispatchers.IO) {
         runCatching {
-            val request = Request.Builder()
-                .url(url)
+            val cleanToken = githubToken.trim()
+            // Em repositórios privados, browser_download_url falha com 404 sem sessão web;
+            // usamos a URL de asset da API com Accept: application/octet-stream + Bearer token.
+            val targetUrl = if (cleanToken.isNotBlank() && assetApiUrl.isNotBlank()) {
+                assetApiUrl
+            } else {
+                url
+            }
+            val reqBuilder = Request.Builder()
+                .url(targetUrl)
                 .header("User-Agent", "DevAgent/${BuildConfig.VERSION_NAME}")
                 .get()
-                .build()
-            http.newCall(request).execute().use { response ->
+
+            if (cleanToken.isNotBlank()) {
+                reqBuilder.header("Authorization", "Bearer $cleanToken")
+                reqBuilder.header("Accept", "application/octet-stream")
+                reqBuilder.header("X-GitHub-Api-Version", "2022-11-28")
+            }
+
+            http.newCall(reqBuilder.build()).execute().use { response ->
                 if (!response.isSuccessful) throw Exception("Download HTTP ${response.code}")
                 val body = response.body ?: throw Exception("Corpo vazio")
                 val total = body.contentLength()
@@ -146,12 +177,6 @@ class AppUpdateChecker(
         ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
 
-    /**
-     * Preferência:
-     * 1) "versionCode=123" no body da release (CI)
-     * 2) último segmento numérico do tag (ex.: 1.1.42 → 42)
-     * 3) fallback legível 1.2.3 → 10203
-     */
     private fun parseVersionCode(tag: String, releaseBody: String): Int {
         Regex("versionCode\\s*[=:]\\s*(\\d+)", RegexOption.IGNORE_CASE)
             .find(releaseBody)?.groupValues?.getOrNull(1)?.toIntOrNull()
@@ -161,7 +186,6 @@ class AppUpdateChecker(
             .split('.')
             .mapNotNull { it.toIntOrNull() }
         if (parts.isEmpty()) return 0
-        // v1.1.N → N (run_number do Actions)
         if (parts.size >= 3) return parts.last()
         if (parts.size == 1) return parts[0]
         return parts[0] * 100 + parts[1]

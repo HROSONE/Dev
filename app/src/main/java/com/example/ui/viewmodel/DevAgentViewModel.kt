@@ -202,7 +202,11 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
         val qwenVariant = apiKeyStore.getQwenVariant()
         val qwenEndpoint = apiKeyStore.getQwenLocalEndpoint()
         val hfKey = apiKeyStore.getHuggingFaceKey()
+        val storedGhToken = apiKeyStore.getGitHubToken()
 
+        if (storedGhToken.isNotBlank() && sessionToken.isBlank()) {
+            sessionToken = storedGhToken
+        }
         if (geminiKey.isNotBlank()) GeminiClient.setApiKey(geminiKey)
         if (orKey.isNotBlank()) OpenRouterClient.setApiKey(orKey)
 
@@ -233,6 +237,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                 qwenLocalEndpoint = qwenEndpoint,
                 isQwenModelDownloaded = downloaded,
                 qwenDownloadStatus = dlStatus,
+                hasWriteToken = sessionToken.isNotBlank(),
                 hasLlmKey = LlmGateway.isConfigured(),
                 llmStatusLabel = LlmGateway.statusLabel()
             )
@@ -242,6 +247,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
     fun getStoredGeminiKey(): String = apiKeyStore.getGeminiKey()
     fun getStoredOpenRouterKey(): String = apiKeyStore.getOpenRouterKey()
     fun getStoredHuggingFaceKey(): String = apiKeyStore.getHuggingFaceKey()
+    fun getStoredGitHubToken(): String = apiKeyStore.getGitHubToken()
 
     fun saveLlmSettings(
         provider: LlmProvider,
@@ -250,7 +256,8 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
         openRouterModelId: String,
         qwenVariant: QwenModelVariant = _uiState.value.qwenVariant,
         qwenLocalEndpoint: String = _uiState.value.qwenLocalEndpoint,
-        huggingFaceKey: String = getStoredHuggingFaceKey()
+        huggingFaceKey: String = getStoredHuggingFaceKey(),
+        gitHubToken: String = getStoredGitHubToken()
     ) {
         apiKeyStore.setProvider(provider)
         apiKeyStore.setGeminiKey(geminiKey)
@@ -259,6 +266,10 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
         apiKeyStore.setQwenVariant(qwenVariant)
         apiKeyStore.setQwenLocalEndpoint(qwenLocalEndpoint)
         apiKeyStore.setHuggingFaceKey(huggingFaceKey)
+        apiKeyStore.setGitHubToken(gitHubToken)
+        if (gitHubToken.isNotBlank()) {
+            sessionToken = gitHubToken.trim()
+        }
 
         applyStoredLlmConfig()
         _uiState.update {
@@ -346,6 +357,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
 
     fun checkForAppUpdate(autoDownload: Boolean = true) {
         if (_uiState.value.isCheckingUpdate || _uiState.value.isDownloadingUpdate) return
+        val ghToken = sessionToken.ifBlank { apiKeyStore.getGitHubToken() }
         _uiState.update {
             it.copy(
                 isCheckingUpdate = true,
@@ -354,7 +366,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
             )
         }
         viewModelScope.launch {
-            updateChecker.checkForUpdate().fold(
+            updateChecker.checkForUpdate(githubToken = ghToken).fold(
                 onSuccess = { info ->
                     _uiState.update {
                         it.copy(
@@ -383,11 +395,17 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
         val info = _uiState.value.updateAvailable ?: return
         if (_uiState.value.isDownloadingUpdate || _uiState.value.updateApkReady) return
         val app = getApplication<Application>()
+        val ghToken = sessionToken.ifBlank { apiKeyStore.getGitHubToken() }
         _uiState.update {
             it.copy(isDownloadingUpdate = true, updateDownloadProgress = 0f, updateStatus = "Baixando…")
         }
         viewModelScope.launch {
-            updateChecker.downloadApk(app, info.apkUrl) { downloaded, total ->
+            updateChecker.downloadApk(
+                context = app,
+                url = info.apkUrl,
+                assetApiUrl = info.assetApiUrl,
+                githubToken = ghToken
+            ) { downloaded, total ->
                 if (total > 0) {
                     val p = (downloaded.toFloat() / total.toFloat()).coerceIn(0f, 1f)
                     _uiState.update { it.copy(updateDownloadProgress = p) }
@@ -415,6 +433,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
     fun downloadAndInstallUpdate() {
         val info = _uiState.value.updateAvailable ?: return
         val app = getApplication<Application>()
+        val ghToken = sessionToken.ifBlank { apiKeyStore.getGitHubToken() }
         if (!updateChecker.canRequestPackageInstalls(app)) {
             _uiState.update {
                 it.copy(updateStatus = "Permita instalar apps deste app e volte.")
@@ -431,7 +450,12 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                 cached
             } else {
                 _uiState.update { it.copy(isDownloadingUpdate = true, updateStatus = "Baixando APK…") }
-                updateChecker.downloadApk(app, info.apkUrl) { downloaded, total ->
+                updateChecker.downloadApk(
+                    context = app,
+                    url = info.apkUrl,
+                    assetApiUrl = info.assetApiUrl,
+                    githubToken = ghToken
+                ) { downloaded, total ->
                     if (total > 0) {
                         _uiState.update {
                             it.copy(updateDownloadProgress = (downloaded.toFloat() / total).coerceIn(0f, 1f))
@@ -464,9 +488,6 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
     fun setTab(tab: Int) { _uiState.update { it.copy(activeTab = tab) } }
     fun selectFile(file: RepoFile) { _uiState.update { it.copy(selectedFile = file) } }
 
-    /**
-     * Cria um projeto / repositório local do zero diretamente no aparelho a partir de um template.
-     */
     fun createLocalProject(projectName: String, template: ProjectTemplate) {
         val cleanName = projectName.trim().ifBlank { "meu-projeto" }
         viewModelScope.launch {
@@ -496,9 +517,6 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    /**
-     * Importa arquivos avulsos ou um pacote .zip inteiro selecionado da memória do celular.
-     */
     fun importFilesFromDevice(uris: List<Uri>, targetSubfolder: String = "") {
         if (uris.isEmpty()) return
         val app = getApplication<Application>()
@@ -532,10 +550,6 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    /**
-     * Publica o projeto local atual criando um repositório NOVO no GitHub (POST /user/repos)
-     * e enviando todos os arquivos do workspace.
-     */
     fun createGitHubRepoFromWorkspace(
         repoName: String,
         description: String,
@@ -543,13 +557,14 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
         token: String
     ) {
         if (_uiState.value.isCreatingGitHubRepo) return
-        val effectiveToken = token.trim().ifBlank { sessionToken }
+        val effectiveToken = token.trim().ifBlank { sessionToken }.ifBlank { apiKeyStore.getGitHubToken() }
         if (effectiveToken.isBlank()) {
             _uiState.update {
                 it.copy(lastCommitStatus = "Informe seu token do GitHub (escopo repo) para criar o repositório.")
             }
             return
         }
+        apiKeyStore.setGitHubToken(effectiveToken)
         _uiState.update {
             it.copy(
                 isCreatingGitHubRepo = true,
@@ -677,11 +692,15 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
 
     fun connectRepository(repository: String, token: String = "") {
         if (_uiState.value.isConnectingRepo) return
+        val effectiveToken = token.trim().ifBlank { sessionToken }.ifBlank { apiKeyStore.getGitHubToken() }
+        if (token.isNotBlank()) {
+            apiKeyStore.setGitHubToken(token.trim())
+        }
         _uiState.update { it.copy(isConnectingRepo = true, repositoryStatus = "Conectando ao GitHub…") }
         viewModelScope.launch {
-            githubClient.readRepository(repository, token).fold(
+            githubClient.readRepository(repository, effectiveToken).fold(
                 onSuccess = { snapshot ->
-                    sessionToken = token.trim()
+                    sessionToken = effectiveToken
                     defaultBranch = snapshot.defaultBranch
                     val files = snapshot.files.map {
                         RepoFile(path = it.path, language = it.language, content = it.content)
@@ -757,7 +776,8 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
             }
             return
         }
-        if (sessionToken.isBlank()) {
+        val effectiveToken = sessionToken.ifBlank { apiKeyStore.getGitHubToken() }
+        if (effectiveToken.isBlank()) {
             _uiState.update { it.copy(lastCommitStatus = "Token contents:write necessário.") }
             return
         }
@@ -785,7 +805,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                     }
                 }
                 val msg = commitMessage.ifBlank { "DevAgent: atualiza ${contents.size} arquivos" }
-                githubClient.commitFiles(repo, contents, msg, sessionToken, defaultBranch).fold(
+                githubClient.commitFiles(repo, contents, msg, effectiveToken, defaultBranch).fold(
                     onSuccess = { commit ->
                         repositoryBaseline = repositoryBaseline.orEmpty() + contents
                         _uiState.update { current ->
@@ -827,7 +847,8 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
             }
             return
         }
-        if (sessionToken.isBlank()) {
+        val effectiveToken = sessionToken.ifBlank { apiKeyStore.getGitHubToken() }
+        if (effectiveToken.isBlank()) {
             _uiState.update { it.copy(lastCommitStatus = "Token contents:write necessário.") }
             return
         }
@@ -840,7 +861,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val content = withContext(Dispatchers.IO) { file.readText(Charsets.UTF_8) }
             val msg = commitMessage.ifBlank { "DevAgent: atualiza $path" }
-            githubClient.commitFile(repo, path, content, msg, sessionToken, defaultBranch).fold(
+            githubClient.commitFile(repo, path, content, msg, effectiveToken, defaultBranch).fold(
                 onSuccess = { commit ->
                     _uiState.update {
                         it.copy(
