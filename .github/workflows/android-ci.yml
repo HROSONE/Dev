@@ -52,7 +52,7 @@ jobs:
 
       # Unit tests are a required gate: failures must fail the workflow.
       - name: Unit tests
-        run: gradle testDebugUnitTest --stacktrace
+        run: gradle --no-configuration-cache testDebugUnitTest --stacktrace
 
       - name: Assemble debug APK
-        run: gradle assembleDebug --stacktrace
+        run: gradle --no-configuration-cache assembleDebug --stacktrace
