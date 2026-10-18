@@ -11,6 +11,7 @@ import com.example.data.api.OpenRouterClient
 import com.example.data.engine.AgentExecutionEvent
 import com.example.data.engine.DevAgentEngine
 import com.example.data.engine.WorkspaceCommandRunner
+import com.example.data.engine.WorkspaceChangeTracker
 import com.example.data.model.*
 import com.example.data.update.AppUpdateChecker
 import com.example.data.update.AppUpdateInfo
@@ -74,6 +75,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
 
     private var sessionToken: String = ""
     private var defaultBranch: String = "main"
+    private var repositoryBaseline: Map<String, String>? = null
     private var mutationDecision: CompletableDeferred<Boolean>? = null
 
     private val _uiState = MutableStateFlow(DevAgentUiState())
@@ -295,6 +297,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                     val files = snapshot.files.map {
                         RepoFile(path = it.path, language = it.language, content = it.content)
                     }
+                    repositoryBaseline = files.associate { it.path to it.content }
                     val sync = withContext(Dispatchers.IO) {
                         engine.syncRepositoryToWorkspace(files)
                     }
@@ -381,6 +384,9 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                             repoFiles = it.repoFiles.map { f ->
                                 if (f.path == path) f.copy(isModified = false, content = content) else f
                             }
+                        )
+                    }
+                    repositoryBaseline = repositoryBaseline.orEmpty() + (path to content)
                         )
                     }
                 },
@@ -588,9 +594,10 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                     }.sortedBy { it.path }.toList()
                 }
                 if (files.isNotEmpty()) {
+                    val trackedFiles = WorkspaceChangeTracker.markChanges(files, repositoryBaseline)
                     _uiState.update { s ->
                         s.copy(
-                            repoFiles = files,
+                            repoFiles = trackedFiles,
                             selectedFile = s.selectedFile?.let { sel ->
                                 files.find { it.path == sel.path }
                             } ?: files.firstOrNull()
