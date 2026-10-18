@@ -50,9 +50,8 @@ jobs:
               -dname "CN=Android Debug,O=Android,C=US"
           fi
 
-      # Testes unitários: continue-on-error enquanto limpeza dos testes legados avança
+      # Unit tests are a required gate: failures must fail the workflow.
       - name: Unit tests
-        continue-on-error: true
         run: gradle testDebugUnitTest --stacktrace
 
       - name: Assemble debug APK
