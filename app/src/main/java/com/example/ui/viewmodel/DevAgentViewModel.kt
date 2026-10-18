@@ -406,7 +406,8 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                 context = app,
                 url = info.apkUrl,
                 assetApiUrl = info.assetApiUrl,
-                githubToken = ghToken
+                githubToken = ghToken,
+                versionCode = info.versionCode
             ) { downloaded, total ->
                 if (total > 0) {
                     val p = (downloaded.toFloat() / total.toFloat()).coerceIn(0f, 1f)
@@ -447,8 +448,8 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
             return
         }
         viewModelScope.launch {
-            val cached = File(app.cacheDir, "updates/devagent-update.apk")
-            val file = if (cached.isFile && cached.length() > 10_000L) {
+            val cached = updateChecker.getCachedApkFile(app, info.versionCode)
+            val file = if (updateChecker.isValidApkFile(cached)) {
                 cached
             } else {
                 _uiState.update { it.copy(isDownloadingUpdate = true, updateStatus = "Baixando APK…") }
@@ -456,7 +457,8 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                     context = app,
                     url = info.apkUrl,
                     assetApiUrl = info.assetApiUrl,
-                    githubToken = ghToken
+                    githubToken = ghToken,
+                    versionCode = info.versionCode
                 ) { downloaded, total ->
                     if (total > 0) {
                         _uiState.update {
