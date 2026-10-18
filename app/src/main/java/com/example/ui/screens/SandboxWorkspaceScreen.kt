@@ -32,6 +32,7 @@ import com.example.ui.theme.*
 @Composable
 fun SandboxWorkspaceScreen(
     activeRepo: String,
+    repositoryStatus: String = "",
     files: List<RepoFile>,
     selectedFile: RepoFile?,
     onSelectFile: (RepoFile) -> Unit,
@@ -102,6 +103,19 @@ fun SandboxWorkspaceScreen(
                     color = TextPrimary
                 )
             }
+        }
+
+        if (repositoryStatus.isNotBlank()) {
+            Text(
+                text = repositoryStatus,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(DarkSurfaceVariant)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                fontSize = 11.sp,
+                color = if (repositoryStatus.contains("falhas")) AccentYellow else TextSecondary,
+                lineHeight = 15.sp
+            )
         }
 
         TabRow(
@@ -263,7 +277,7 @@ fun SandboxWorkspaceScreen(
                             value = terminalInput,
                             onValueChange = { terminalInput = it },
                             placeholder = {
-                                Text("pwd | ls | cat arquivo", fontSize = 11.sp, color = TextMuted)
+                                Text("pwd, ls ou cat README.md", fontSize = 11.sp, color = TextMuted)
                             },
                             modifier = Modifier
                                 .weight(1f)
