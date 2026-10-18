@@ -387,8 +387,6 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                         )
                     }
                     repositoryBaseline = repositoryBaseline.orEmpty() + (path to content)
-                        )
-                    }
                 },
                 onFailure = { err ->
                     _uiState.update {
