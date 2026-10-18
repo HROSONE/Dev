@@ -50,7 +50,7 @@ jobs:
         run: |
           CODE=${{ github.run_number }}
           NAME="1.1.${CODE}"
-          gradle assembleDebug \
+          gradle --no-configuration-cache assembleDebug \
             -PversionCode=$CODE \
             -PversionName=$NAME \
             --stacktrace
@@ -59,6 +59,8 @@ jobs:
         run: |
           mkdir -p dist
           APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+          test -n "$APK"
+          test -s "$APK"
           cp "$APK" "dist/DevAgent-1.1.${{ github.run_number }}.apk"
           ls -la dist/
 
