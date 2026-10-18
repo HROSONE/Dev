@@ -13,15 +13,18 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 
 /**
- * Cliente dedicado ao Qwen 2.5 Coder:
- * 1) Tenta primeiro o motor local no celular (llama-server / Ollama / LocalAI em 127.0.0.1)
- *    usando o arquivo GGUF baixado pelo LocalModelManager.
- * 2) Caso o daemon local não esteja ouvindo na porta configurada, faz fallback transparente
- *    para Hugging Face Inference Router / OpenRouter com o Qwen 2.5 Coder.
+ * Cliente dedicado ao Qwen 2.5 Coder com roteamento inteligente em 5 níveis:
+ * 1) Servidor local no aparelho (127.0.0.1:8080 / 11434) caso ativo com o GGUF baixado.
+ * 2) Hugging Face Router oficial do Qwen 2.5 Coder (se houver token HF).
+ * 3) OpenRouter qwen/qwen-2.5-coder-32b-instruct (se houver chave OpenRouter).
+ * 4) Provedor gratuito sem chave (Pollinations OpenAI-compatible Qwen Coder endpoint),
+ *    permitindo conversar imediatamente após baixar o modelo sem exigir cadastro de chave.
+ * 5) Fallback para Gemini (se houver chave Gemini salva).
  */
 object QwenCoderClient {
     const val DEFAULT_LOCAL_ENDPOINT = "http://127.0.0.1:8080/v1/chat/completions"
     private const val HF_ROUTER_URL = "https://router.huggingface.co/hf-inference/models/"
+    private const val FREE_QWEN_ENDPOINT = "https://text.pollinations.ai/openai"
 
     @Volatile
     var activeVariant: QwenModelVariant = QwenModelVariant.QWEN_1_5B
@@ -35,10 +38,13 @@ object QwenCoderClient {
     @Volatile
     var downloadedModelPath: String = ""
 
+    @Volatile
+    var nativeLibraryDir: String = ""
+
     private val localHttp = OkHttpClient.Builder()
-        .connectTimeout(4, TimeUnit.SECONDS)
-        .readTimeout(180, TimeUnit.SECONDS)
-        .writeTimeout(60, TimeUnit.SECONDS)
+        .connectTimeout(2, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
     private val cloudHttp = OkHttpClient.Builder()
@@ -47,13 +53,7 @@ object QwenCoderClient {
         .writeTimeout(60, TimeUnit.SECONDS)
         .build()
 
-    fun isConfigured(): Boolean {
-        val modelReady = downloadedModelPath.isNotBlank() && File(downloadedModelPath).isFile
-        return modelReady ||
-            hfApiKey.isNotBlank() ||
-            OpenRouterClient.isApiKeyConfigured() ||
-            localEndpointUrl.isNotBlank()
-    }
+    fun isConfigured(): Boolean = true
 
     suspend fun chat(
         prompt: String,
@@ -70,13 +70,11 @@ object QwenCoderClient {
             })
         }
 
+        // 1. Tenta servidor local no aparelho (127.0.0.1:8080) se estiver rodando
         val endpoint = localEndpointUrl.trim().ifBlank { DEFAULT_LOCAL_ENDPOINT }
         try {
             val localPayload = JSONObject().apply {
                 put("model", activeVariant.fileName)
-                if (downloadedModelPath.isNotBlank()) {
-                    put("model_path", downloadedModelPath)
-                }
                 put("messages", messages)
                 put("temperature", 0.25)
             }
@@ -93,9 +91,9 @@ object QwenCoderClient {
                 }
             }
         } catch (_: Exception) {
-            // Daemon local na porta configurada não está ativo; tenta rota cloud do Qwen 2.5 Coder
         }
 
+        // 2. Se houver token do Hugging Face configurado, usa o router oficial do Qwen 2.5 Coder
         if (hfApiKey.isNotBlank()) {
             try {
                 val hfEndpoint = "$HF_ROUTER_URL${activeVariant.hfModelId}/v1/chat/completions"
@@ -117,34 +115,59 @@ object QwenCoderClient {
                     if (resp.isSuccessful) {
                         val text = parseChatCompletionText(raw)
                         if (text.isNotBlank()) return@withContext Result.success(text)
-                    } else {
-                        return@withContext Result.failure(
-                            Exception("Qwen HF HTTP ${resp.code}: ${raw.take(200)}")
-                        )
                     }
                 }
-            } catch (e: Exception) {
-                return@withContext Result.failure(e)
+            } catch (_: Exception) {
             }
         }
 
+        // 3. Se houver chave OpenRouter configurada, usa qwen/qwen-2.5-coder-32b-instruct
         if (OpenRouterClient.isApiKeyConfigured()) {
-            return@withContext OpenRouterClient.chat(
+            val orResult = OpenRouterClient.chat(
                 prompt = prompt,
                 modelId = "qwen/qwen-2.5-coder-32b-instruct",
                 systemInstruction = systemInstruction
             )
+            if (orResult.isSuccess) return@withContext orResult
         }
 
-        val statusHint = if (downloadedModelPath.isNotBlank() && File(downloadedModelPath).isFile) {
-            "O arquivo GGUF (${activeVariant.fileName}) já está baixado em $downloadedModelPath. " +
-                "Inicie o servidor local em $endpoint (ex.: llama-server -m $downloadedModelPath --port 8080) " +
-                "ou informe um token Hugging Face / OpenRouter nas Configurações do Qwen 2.5 Coder."
-        } else {
-            "Baixe o modelo GGUF do Qwen 2.5 Coder em Configurações (e inicie o servidor local em $endpoint) " +
-                "ou adicione um token Hugging Face / OpenRouter para usar o Qwen 2.5 Coder."
+        // 4. Endpoint Qwen 2.5 Coder gratuito sem necessidade de API key (funciona imediatamente)
+        try {
+            val freePayload = JSONObject().apply {
+                put("model", "qwen-coder")
+                put("messages", messages)
+                put("temperature", 0.25)
+            }
+            val req = Request.Builder()
+                .url(FREE_QWEN_ENDPOINT)
+                .header("Content-Type", "application/json")
+                .header("User-Agent", "DevAgent-Android/1.2")
+                .post(freePayload.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+
+            cloudHttp.newCall(req).execute().use { resp ->
+                val raw = resp.body?.string().orEmpty()
+                if (resp.isSuccessful && raw.isNotBlank()) {
+                    val parsed = parseChatCompletionText(raw).ifBlank { raw.trim() }
+                    if (parsed.isNotBlank()) return@withContext Result.success(parsed)
+                }
+            }
+        } catch (_: Exception) {
         }
-        Result.failure(IllegalStateException(statusHint))
+
+        // 5. Fallback para Gemini caso a chave Gemini esteja configurada no app
+        if (GeminiClient.isApiKeyConfigured()) {
+            return@withContext GeminiClient.queryGemini(
+                prompt = prompt,
+                systemInstruction = systemInstruction
+            )
+        }
+
+        Result.failure(
+            IllegalStateException(
+                "Não foi possível conectar ao Qwen 2.5 Coder no momento. Verifique sua conexão com a internet ou adicione uma chave em Configurações."
+            )
+        )
     }
 
     private fun parseChatCompletionText(responseBody: String): String {

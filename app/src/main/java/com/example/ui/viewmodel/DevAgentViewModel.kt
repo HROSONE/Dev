@@ -101,6 +101,8 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
     val uiState: StateFlow<DevAgentUiState> = _uiState.asStateFlow()
 
     init {
+        QwenCoderClient.nativeLibraryDir =
+            runCatching { application.applicationInfo.nativeLibraryDir.orEmpty() }.getOrDefault("")
         applyStoredLlmConfig()
         restoreLastChatSession()
         refreshWorkspaceListing()
