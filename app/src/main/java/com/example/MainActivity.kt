@@ -511,7 +511,8 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                     hasWriteToken = uiState.hasWriteToken,
                     isCommitting = uiState.isCommitting,
                     lastCommitStatus = uiState.lastCommitStatus,
-                    onCommitFile = { viewModel.commitFileToGitHub(it) }
+                    onCommitFile = { viewModel.commitFileToGitHub(it) },
+                    onCommitModifiedFiles = { viewModel.commitModifiedFilesToGitHub() }
                 )
                 2 -> ArchitectureGuideScreen()
             }
