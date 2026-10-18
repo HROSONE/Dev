@@ -48,11 +48,13 @@ class WorkspaceCommandRunnerTest {
     }
 
     @Test
-    fun outputIsBounded() {
+    fun outputIsBoundedByBytesAndDoesNotSplitUtf8Characters() {
         val root = temporaryFolder.newFolder("workspace")
-        File(root, "large.txt").writeText("x".repeat(100_000))
-        val result = WorkspaceCommandRunner(root, maxOutputBytes = 100).run("cat large.txt")
-        assertTrue(result.output.length <= 100)
+        File(root, "large.txt").writeText("😀".repeat(1_000))
+        val result = WorkspaceCommandRunner(root, maxOutputBytes = 101).run("cat large.txt")
+
+        assertTrue(result.output.toByteArray(Charsets.UTF_8).size <= 101)
+        assertFalse(result.output.contains("\uFFFD"))
         assertTrue(result.outputTruncated)
     }
 }
