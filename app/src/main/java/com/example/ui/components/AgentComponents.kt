@@ -3,13 +3,11 @@ package com.example.ui.components
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -27,7 +25,7 @@ import com.example.data.model.*
 import com.example.ui.theme.*
 
 /**
- * Barra superior enxuta: só modo + repo (sem chips de status).
+ * Barra superior enxuta: modo + toggle autônomo (em BUILD) + repo + velocidade.
  */
 @Composable
 fun AgentModeSelector(
@@ -37,15 +35,17 @@ fun AgentModeSelector(
     onSpeedSelected: (ReasoningSpeed) -> Unit,
     activeRepo: String,
     onSelectRepoClick: () -> Unit,
+    autoApproveEdits: Boolean = true,
+    onToggleAutoApprove: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
             .background(DarkBackground)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         // Segmento de modo compacto
         Row(
@@ -70,7 +70,7 @@ fun AgentModeSelector(
                 ) {
                     Text(
                         mode.label,
-                        fontSize = 12.sp,
+                        fontSize = 11.sp,
                         fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
                         color = if (selected) AccentCyan else TextSecondary
                     )
@@ -78,11 +78,34 @@ fun AgentModeSelector(
             }
         }
 
+        // Toggle Autônomo (Auto-Approve estilo Claude Code) visível no modo BUILD
+        if (selectedMode == AgentMode.BUILD) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(
+                        if (autoApproveEdits) AccentGreen.copy(alpha = 0.18f)
+                        else AccentYellow.copy(alpha = 0.18f)
+                    )
+                    .clickable { onToggleAutoApprove() }
+                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                    .testTag("toggle_auto_approve"),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    if (autoApproveEdits) "⚡ Auto" else "🔒 Diff",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (autoApproveEdits) AccentGreen else AccentYellow
+                )
+            }
+        }
+
         // Repo: ícone único
         IconButton(
             onClick = onSelectRepoClick,
             modifier = Modifier
-                .size(36.dp)
+                .size(34.dp)
                 .clip(CircleShape)
                 .background(DarkSurface)
         ) {
@@ -90,17 +113,17 @@ fun AgentModeSelector(
                 Icons.Default.FolderOpen,
                 contentDescription = "Repositório",
                 tint = if (activeRepo.isBlank()) TextMuted else AccentGreen,
-                modifier = Modifier.size(18.dp)
+                modifier = Modifier.size(17.dp)
             )
         }
 
-        // Speed escondido num menu simples (só se BUILD/ASK precisam)
+        // Speed escondido num menu simples
         var speedMenu by remember { mutableStateOf(false) }
         Box {
             IconButton(
                 onClick = { speedMenu = true },
                 modifier = Modifier
-                    .size(36.dp)
+                    .size(34.dp)
                     .clip(CircleShape)
                     .background(DarkSurface)
             ) {
@@ -108,7 +131,7 @@ fun AgentModeSelector(
                     if (selectedSpeed == ReasoningSpeed.FAST) Icons.Default.Bolt else Icons.Default.Psychology,
                     contentDescription = "Velocidade",
                     tint = TextSecondary,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(17.dp)
                 )
             }
             DropdownMenu(
@@ -161,7 +184,7 @@ fun LiveStatusIndicator(
         Box(Modifier.size(7.dp).clip(CircleShape).background(AccentCyan.copy(alpha = alpha)))
         Spacer(Modifier.width(8.dp))
         Text(
-            "Pensando… ${String.format("%.0f", thinkingSeconds)}s",
+            "Executando agente… ${String.format("%.0f", thinkingSeconds)}s · $commandsExecuted tools",
             fontSize = 12.sp,
             color = TextSecondary
         )
@@ -186,7 +209,7 @@ fun ThoughtProcessCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                if (isThinking) "pensando" else "passos",
+                if (isThinking) "raciocínio (${thoughtSteps.size})" else "passos (${thoughtSteps.size})",
                 fontSize = 11.sp,
                 color = TextMuted
             )
@@ -214,7 +237,7 @@ fun ThoughtProcessCard(
     }
 }
 
-/** Tool card compacto, fechado por padrão. */
+/** Tool card compacto, exibe diff colorido quando expandido. */
 @Composable
 fun ToolExecutionCard(
     tool: ToolCallInfo,
@@ -276,9 +299,12 @@ fun ToolExecutionCard(
         }
         AnimatedVisibility(visible = tool.isExpanded) {
             Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                when {
-                    tool.diffLines.isNotEmpty() -> DiffView(lines = tool.diffLines)
-                    tool.output.isNotBlank() -> TerminalConsoleBox(text = tool.output)
+                if (tool.diffLines.isNotEmpty()) {
+                    DiffView(lines = tool.diffLines)
+                }
+                if (tool.output.isNotBlank()) {
+                    if (tool.diffLines.isNotEmpty()) Spacer(Modifier.height(6.dp))
+                    TerminalConsoleBox(text = tool.output)
                 }
             }
         }

@@ -30,6 +30,7 @@ import java.util.UUID
 data class DevAgentUiState(
     val selectedMode: AgentMode = AgentMode.BUILD,
     val selectedSpeed: ReasoningSpeed = ReasoningSpeed.DEEP_THINKING,
+    val autoApproveEdits: Boolean = true,
     val activeRepo: String = "",
     val messages: List<ChatMessage> = emptyList(),
     val isThinking: Boolean = false,
@@ -43,8 +44,8 @@ data class DevAgentUiState(
     val repositoryStatus: String = "",
     val pendingMutation: PendingMutation? = null,
     val terminalLogs: List<String> = listOf(
-        "Workspace local ativo. Comandos permitidos: pwd, ls, cat.",
-        "Ex.: ls  |  cat README.md  |  pwd"
+        "Workspace local ativo. Comandos: pwd, ls, cat, grep, find, head, tail, wc, tree.",
+        "Ex.: tree  |  grep ViewModel app/src  |  cat README.md"
     ),
     val isCommitting: Boolean = false,
     val lastCommitStatus: String = "",
@@ -83,7 +84,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
 
     init {
         applyStoredLlmConfig()
-        // Auto-update: checa e baixa em background ao abrir
+        refreshWorkspaceListing()
         checkForAppUpdate(autoDownload = true)
     }
 
@@ -256,9 +257,42 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
 
     fun setMode(mode: AgentMode) { _uiState.update { it.copy(selectedMode = mode) } }
     fun setSpeed(speed: ReasoningSpeed) { _uiState.update { it.copy(selectedSpeed = speed) } }
+    fun toggleAutoApproveEdits() { _uiState.update { it.copy(autoApproveEdits = !it.autoApproveEdits) } }
     fun setPrompt(prompt: String) { _uiState.update { it.copy(currentPrompt = prompt) } }
     fun setTab(tab: Int) { _uiState.update { it.copy(activeTab = tab) } }
     fun selectFile(file: RepoFile) { _uiState.update { it.copy(selectedFile = file) } }
+
+    fun saveManualFileEdit(relativePath: String, newContent: String) {
+        val cleanPath = relativePath.trim().removePrefix("/")
+        if (cleanPath.isBlank()) return
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val root = workspaceDir.canonicalFile
+                    if (!root.exists()) root.mkdirs()
+                    val target = File(root, cleanPath).canonicalFile
+                    if (target == root || !target.toPath().startsWith(root.toPath())) {
+                        throw IllegalArgumentException("Caminho fora dos limites do workspace.")
+                    }
+                    target.parentFile?.mkdirs()
+                    target.writeText(newContent, Charsets.UTF_8)
+                }
+                refreshWorkspaceListing(selectPath = cleanPath)
+                _uiState.update {
+                    it.copy(repositoryStatus = "Arquivo salvo no workspace: $cleanPath")
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(repositoryStatus = "Erro ao salvar $cleanPath: ${e.message}")
+                }
+            }
+        }
+    }
+
+    fun revertFileToBaseline(relativePath: String) {
+        val baselineContent = repositoryBaseline?.get(relativePath) ?: return
+        saveManualFileEdit(relativePath, baselineContent)
+    }
 
     fun toggleToolExpand(messageId: String, toolId: String) {
         _uiState.update { state ->
@@ -355,7 +389,6 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
             }
         }
     }
-
 
     fun commitModifiedFilesToGitHub(commitMessage: String = "") {
         val state = _uiState.value
@@ -485,6 +518,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
             return
         }
 
+        val priorHistory = _uiState.value.messages
         val userMessage = ChatMessage(
             id = UUID.randomUUID().toString(),
             role = MessageRole.USER,
@@ -520,18 +554,23 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                     speed = _uiState.value.selectedSpeed,
                     repositoryName = _uiState.value.activeRepo,
                     repositoryFiles = _uiState.value.repoFiles,
-                    confirmMutation = { _, path, contentPreview ->
+                    conversationHistory = priorHistory,
+                    confirmMutation = { toolName, path, contentPreview ->
+                        if (_uiState.value.autoApproveEdits) {
+                            refreshWorkspaceListing()
+                            return@executeTask true
+                        }
                         val oldContent = _uiState.value.repoFiles.find { it.path == path }?.content.orEmpty()
                         val deferred = CompletableDeferred<Boolean>()
                         mutationDecision = deferred
                         _uiState.update {
                             it.copy(
                                 pendingMutation = PendingMutation(
-                                    toolName = "write_file",
+                                    toolName = toolName,
                                     path = path,
                                     contentPreview = contentPreview,
                                     messageId = agentMessageId,
-                                    diffLines = buildSimpleDiff(oldContent, contentPreview)
+                                    diffLines = DevAgentEngine.computeUnifiedDiff(oldContent, contentPreview)
                                 )
                             )
                         }
@@ -563,7 +602,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                                     }
                                 )
                             }
-                        is AgentExecutionEvent.ToolCallUpdated ->
+                        is AgentExecutionEvent.ToolCallUpdated -> {
                             _uiState.update { s ->
                                 s.copy(messages = s.messages.map { msg ->
                                     if (msg.id != agentMessageId) msg
@@ -577,6 +616,10 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                                     }
                                 })
                             }
+                            if (event.toolCall.type in setOf(ToolType.EDIT_FILE, ToolType.WRITE_FILE, ToolType.DELETE_FILE)) {
+                                refreshWorkspaceListing()
+                            }
+                        }
                         is AgentExecutionEvent.MutationProposed -> { }
                         is AgentExecutionEvent.FinalResponseChunk -> {
                             _uiState.update { s ->
@@ -604,6 +647,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                                     }
                                 )
                             }
+                            refreshWorkspaceListing()
                         }
                     }
                 }
@@ -626,28 +670,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    private fun buildSimpleDiff(oldContent: String, newContent: String): List<DiffLine> {
-        val oldLines = oldContent.lines()
-        val newLines = newContent.lines()
-        val result = mutableListOf<DiffLine>()
-        val max = maxOf(oldLines.size, newLines.size).coerceAtMost(80)
-        for (i in 0 until max) {
-            val o = oldLines.getOrNull(i)
-            val n = newLines.getOrNull(i)
-            when {
-                o == null && n != null -> result += DiffLine(DiffLineType.ADDED, "+ $n")
-                n == null && o != null -> result += DiffLine(DiffLineType.REMOVED, "- $o")
-                o != null && n != null && o != n -> {
-                    result += DiffLine(DiffLineType.REMOVED, "- $o")
-                    result += DiffLine(DiffLineType.ADDED, "+ $n")
-                }
-                o != null -> result += DiffLine(DiffLineType.CONTEXT, "  $o")
-            }
-        }
-        return result
-    }
-
-    private fun refreshWorkspaceListing() {
+    private fun refreshWorkspaceListing(selectPath: String? = null) {
         viewModelScope.launch {
             try {
                 val root = workspaceDir
@@ -662,16 +685,15 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                         )
                     }.sortedBy { it.path }.toList()
                 }
-                if (files.isNotEmpty()) {
-                    val trackedFiles = WorkspaceChangeTracker.markChanges(files, repositoryBaseline)
-                    _uiState.update { s ->
-                        s.copy(
-                            repoFiles = trackedFiles,
-                            selectedFile = s.selectedFile?.let { sel ->
-                                files.find { it.path == sel.path }
-                            } ?: files.firstOrNull()
-                        )
-                    }
+                val trackedFiles = WorkspaceChangeTracker.markChanges(files, repositoryBaseline)
+                _uiState.update { s ->
+                    val targetPath = selectPath ?: s.selectedFile?.path
+                    s.copy(
+                        repoFiles = trackedFiles,
+                        selectedFile = targetPath?.let { p ->
+                            trackedFiles.find { it.path == p }
+                        } ?: trackedFiles.firstOrNull()
+                    )
                 }
             } catch (_: Exception) {
             }
@@ -681,6 +703,8 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
     private fun languageFor(path: String) = when (path.substringAfterLast('.').lowercase()) {
         "kt", "kts" -> "kotlin"
         "java" -> "java"
+        "xml" -> "xml"
+        "json" -> "json"
         "md" -> "markdown"
         "py" -> "python"
         else -> "text"

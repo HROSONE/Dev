@@ -18,9 +18,10 @@ data class CommandResult(
 )
 
 /**
- * Minimal local command runner. It deliberately is NOT an arbitrary shell:
- * commands are tokenized without a shell and only pwd, ls and cat are accepted.
- * File arguments are constrained to the app-owned workspace.
+ * Local workspace command runner.
+ *
+ * Supports native OS execution for pwd, ls and cat, plus built-in safe workspace
+ * commands (grep, find, head, tail, wc, tree) constrained to the canonical workspace root.
  */
 class WorkspaceCommandRunner(
     workspaceRoot: File,
@@ -40,11 +41,23 @@ class WorkspaceCommandRunner(
         val args = tokenize(commandLine)
         if (args.isEmpty()) throw IOException("Informe um comando.")
         val executable = args.first()
-        if (executable !in setOf("pwd", "ls", "cat")) {
-            throw IOException("Comando não permitido: $executable. Permitidos nesta versão: pwd, ls e cat.")
+        if (executable !in ALLOWED_COMMANDS) {
+            throw IOException(
+                "Comando não permitido: $executable. Permitidos: ${ALLOWED_COMMANDS.joinToString(", ")}."
+            )
         }
         if (args.any { token -> token.any { it in SHELL_META } }) {
             throw IOException("Caracteres de shell não são permitidos. Envie um comando simples, sem pipes ou encadeamento.")
+        }
+
+        // Built-in portable workspace commands (work reliably across all Android devices)
+        when (executable) {
+            "find" -> return runBuiltinFind(args)
+            "tree" -> return runBuiltinTree(args)
+            "grep" -> return runBuiltinGrep(args)
+            "head" -> return runBuiltinHeadTail(args, isHead = true)
+            "tail" -> return runBuiltinHeadTail(args, isHead = false)
+            "wc" -> return runBuiltinWc(args)
         }
 
         val resolvedArgs = when (executable) {
@@ -94,7 +107,6 @@ class WorkspaceCommandRunner(
                         }
                     }
                     if (overflow) {
-                        // Stop a command that produces more output than we can safely retain.
                         process.destroyForcibly()
                         break
                     }
@@ -109,7 +121,6 @@ class WorkspaceCommandRunner(
         val finished = try {
             process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
         } finally {
-            // If waitFor itself is interrupted, do not leave the child process running.
             if (Thread.currentThread().isInterrupted) process.destroyForcibly()
         }
         if (!finished) {
@@ -130,6 +141,99 @@ class WorkspaceCommandRunner(
             output = decodeCompleteUtf8(bytes),
             timedOut = !finished,
             outputTruncated = truncated.get()
+        )
+    }
+
+    private fun runBuiltinFind(args: List<String>): CommandResult {
+        val targetRel = args.getOrNull(1) ?: "."
+        val dir = resolveWorkspacePath(targetRel, mustExist = true)
+        val filter = args.getOrNull(2)?.lowercase()
+        val files = dir.walkTopDown()
+            .onEnter { it.canonicalFile == root || it.canonicalFile.toPath().startsWith(root.toPath()) }
+            .filter { it.isFile }
+            .map { it.relativeTo(root).invariantSeparatorsPath }
+            .filter { filter == null || it.lowercase().contains(filter) }
+            .sorted()
+            .toList()
+        return boundedResult(args.joinToString(" "), files.joinToString("\n"))
+    }
+
+    private fun runBuiltinTree(args: List<String>): CommandResult {
+        val targetRel = args.getOrNull(1) ?: "."
+        val dir = resolveWorkspacePath(targetRel, mustExist = true)
+        val entries = dir.walkTopDown()
+            .onEnter { it.canonicalFile == root || it.canonicalFile.toPath().startsWith(root.toPath()) }
+            .filter { it != dir }
+            .map {
+                val rel = it.relativeTo(dir).invariantSeparatorsPath
+                val depth = rel.count { c -> c == '/' }
+                val indent = "  ".repeat(depth)
+                val suffix = if (it.isDirectory) "/" else ""
+                "$indent${it.name}$suffix"
+            }
+            .toList()
+        return boundedResult(args.joinToString(" "), entries.joinToString("\n"))
+    }
+
+    private fun runBuiltinGrep(args: List<String>): CommandResult {
+        if (args.size < 2) throw IOException("Uso: grep <termo> [caminho-relativo]")
+        val pattern = args[1]
+        val targetRel = args.getOrNull(2) ?: "."
+        val target = resolveWorkspacePath(targetRel, mustExist = true)
+        val matches = mutableListOf<String>()
+        val files = if (target.isFile) listOf(target) else {
+            target.walkTopDown()
+                .onEnter { it.canonicalFile == root || it.canonicalFile.toPath().startsWith(root.toPath()) }
+                .filter { it.isFile }
+                .sortedBy { it.relativeTo(root).invariantSeparatorsPath }
+                .toList()
+        }
+        for (file in files) {
+            if (matches.size >= 150) break
+            val text = try { file.readText(Charsets.UTF_8) } catch (_: Exception) { continue }
+            if (text.indexOf('\u0000') >= 0) continue
+            val rel = file.relativeTo(root).invariantSeparatorsPath
+            text.lines().forEachIndexed { idx, line ->
+                if (matches.size < 150 && line.contains(pattern, ignoreCase = true)) {
+                    matches += "$rel:${idx + 1}: ${line.trim()}"
+                }
+            }
+        }
+        return boundedResult(args.joinToString(" "), matches.joinToString("\n"))
+    }
+
+    private fun runBuiltinHeadTail(args: List<String>, isHead: Boolean): CommandResult {
+        if (args.size < 2) throw IOException("Uso: ${if (isHead) "head" else "tail"} <arquivo-relativo> [linhas]")
+        val file = resolveWorkspacePath(args[1], mustExist = true)
+        if (!file.isFile) throw IOException("O caminho não é um arquivo.")
+        val count = args.getOrNull(2)?.toIntOrNull()?.coerceIn(1, 500) ?: 30
+        val lines = file.readLines(Charsets.UTF_8)
+        val slice = if (isHead) lines.take(count) else lines.takeLast(count)
+        return boundedResult(args.joinToString(" "), slice.joinToString("\n"))
+    }
+
+    private fun runBuiltinWc(args: List<String>): CommandResult {
+        if (args.size != 2) throw IOException("Uso: wc <arquivo-relativo>")
+        val file = resolveWorkspacePath(args[1], mustExist = true)
+        if (!file.isFile) throw IOException("O caminho não é um arquivo.")
+        val text = file.readText(Charsets.UTF_8)
+        val lines = text.lines().size
+        val words = text.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }.size
+        val bytes = text.toByteArray(Charsets.UTF_8).size
+        val rel = file.relativeTo(root).invariantSeparatorsPath
+        return boundedResult(args.joinToString(" "), "$lines $words $bytes $rel")
+    }
+
+    private fun boundedResult(command: String, rawOutput: String): CommandResult {
+        val rawBytes = rawOutput.toByteArray(Charsets.UTF_8)
+        val truncated = rawBytes.size > maxOutputBytes
+        val slice = if (truncated) rawBytes.copyOf(maxOutputBytes) else rawBytes
+        return CommandResult(
+            command = command,
+            exitCode = 0,
+            output = decodeCompleteUtf8(slice),
+            timedOut = false,
+            outputTruncated = truncated
         )
     }
 
@@ -163,11 +267,11 @@ class WorkspaceCommandRunner(
 
     private fun tokenize(commandLine: String): List<String> {
         if (commandLine.length > 2_048) throw IOException("Comando excede o limite de 2.048 caracteres.")
-        // Intentionally simple grammar: no quoting, expansion, substitutions or shell operators.
         return commandLine.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
     }
 
     private companion object {
+        val ALLOWED_COMMANDS = setOf("pwd", "ls", "cat", "grep", "find", "head", "tail", "wc", "tree")
         val SHELL_META = setOf(';', '|', '&', '>', '<', '`', '$', '(', ')')
     }
 }

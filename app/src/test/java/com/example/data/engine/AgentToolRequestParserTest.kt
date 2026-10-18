@@ -39,12 +39,48 @@ class AgentToolRequestParserTest {
     }
 
     @Test
+    fun parsesSearchFilesRequest() {
+        assertEquals(
+            AgentToolRequest.SearchFiles("DevAgentViewModel", "app/src"),
+            AgentToolRequestParser.parse("""{"tool":"search_files","query":"DevAgentViewModel","path":"app/src"}""")
+        )
+    }
+
+    @Test
+    fun parsesEditFileRequest() {
+        assertEquals(
+            AgentToolRequest.EditFile("src/Main.kt", "fun main() = Unit", "fun main() { println(1) }", false),
+            AgentToolRequestParser.parse(
+                """{"tool":"edit_file","path":"src/Main.kt","old_text":"fun main() = Unit","new_text":"fun main() { println(1) }"}"""
+            )
+        )
+    }
+
+    @Test
     fun parsesWriteFileRequestWithoutExecutingIt() {
         assertEquals(
             AgentToolRequest.WriteFile("notes.txt", "hello"),
             AgentToolRequestParser.parse(
                 """{"tool":"write_file","path":"notes.txt","content":"hello"}"""
             )
+        )
+    }
+
+    @Test
+    fun parsesToolRequestInsideMarkdownFenceOrWithThoughtPrefix() {
+        val response = """
+            Vou ler o arquivo principal primeiro para entender a estrutura.
+            ```json
+            {"tool":"read_file","path":"src/Main.kt"}
+            ```
+        """.trimIndent()
+        assertEquals(
+            AgentToolRequest.ReadFile("src/Main.kt"),
+            AgentToolRequestParser.parse(response)
+        )
+        assertEquals(
+            "Vou ler o arquivo principal primeiro para entender a estrutura.",
+            AgentToolRequestParser.extractThoughtStep(response)
         )
     }
 

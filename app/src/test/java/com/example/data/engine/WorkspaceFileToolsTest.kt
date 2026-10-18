@@ -28,6 +28,38 @@ class WorkspaceFileToolsTest {
     }
 
     @Test
+    fun searchFilesFindsMatchingLinesAcrossWorkspace() {
+        val root = temporaryFolder.newFolder("workspace")
+        java.io.File(root, "src").mkdirs()
+        java.io.File(root, "src/Hello.kt").writeText("package demo\nfun greetUser() = \"olá\"")
+        val tools = WorkspaceFileTools(root)
+
+        val search = tools.searchFiles("greetUser", ".", AgentMode.ASK, ChatIntent.EXPLANATION)
+        assertTrue(search is ToolDispatchResult.Executed)
+        assertTrue((search as ToolDispatchResult.Executed).value.contains("src/Hello.kt:2:"))
+    }
+
+    @Test
+    fun surgicalEditFileReplacesExactTargetWhenConfirmed() {
+        val root = temporaryFolder.newFolder("workspace")
+        java.io.File(root, "src").mkdirs()
+        java.io.File(root, "src/Hello.kt").writeText("fun a() = 1\nfun b() = 2\n")
+        val tools = WorkspaceFileTools(root)
+
+        val result = tools.editFile(
+            relativePath = "src/Hello.kt",
+            oldText = "fun b() = 2",
+            newText = "fun b() = 42",
+            mode = AgentMode.BUILD,
+            intent = ChatIntent.IMPLEMENTATION_REQUEST,
+            userConfirmedMutation = true
+        )
+
+        assertTrue(result is ToolDispatchResult.Executed)
+        assertEquals("fun a() = 1\nfun b() = 42\n", java.io.File(root, "src/Hello.kt").readText())
+    }
+
+    @Test
     fun mutationRequiresExplicitConfirmation() {
         val root = temporaryFolder.newFolder("workspace")
         val tools = WorkspaceFileTools(root)

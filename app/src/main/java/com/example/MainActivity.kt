@@ -235,7 +235,7 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
     uiState.pendingMutation?.let { mutation ->
         AlertDialog(
             onDismissRequest = { viewModel.respondToMutation(false) },
-            title = { Text("Confirmar gravação", fontSize = 16.sp, color = TextPrimary) },
+            title = { Text("Confirmar ${mutation.toolName}", fontSize = 16.sp, color = TextPrimary) },
             text = {
                 Column(Modifier.fillMaxWidth()) {
                     Text(mutation.path, fontSize = 13.sp, color = AccentCyan, fontFamily = FontFamily.Monospace)
@@ -244,7 +244,7 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                         Box(
                             Modifier
                                 .fillMaxWidth()
-                                .heightIn(max = 180.dp)
+                                .heightIn(max = 260.dp)
                                 .verticalScroll(rememberScrollState())
                         ) {
                             DiffView(lines = mutation.diffLines)
@@ -349,6 +349,8 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                             repoInputText = uiState.activeRepo
                             showRepoDialog = true
                         },
+                        autoApproveEdits = uiState.autoApproveEdits,
+                        onToggleAutoApprove = { viewModel.toggleAutoApproveEdits() },
                         modifier = Modifier.weight(1f)
                     )
                     IconButton(
@@ -506,13 +508,15 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                     files = uiState.repoFiles,
                     selectedFile = uiState.selectedFile,
                     onSelectFile = { viewModel.selectFile(it) },
+                    onSaveFile = { path, content -> viewModel.saveManualFileEdit(path, content) },
+                    onRevertFile = { path -> viewModel.revertFileToBaseline(path) },
                     terminalLogs = uiState.terminalLogs,
                     onRunCommand = { viewModel.runTerminalCommand(it) },
                     hasWriteToken = uiState.hasWriteToken,
                     isCommitting = uiState.isCommitting,
                     lastCommitStatus = uiState.lastCommitStatus,
                     onCommitFile = { viewModel.commitFileToGitHub(it) },
-                    onCommitModifiedFiles = { viewModel.commitModifiedFilesToGitHub() }
+                    onCommitModifiedFiles = { msg -> viewModel.commitModifiedFilesToGitHub(msg) }
                 )
                 2 -> ArchitectureGuideScreen()
             }

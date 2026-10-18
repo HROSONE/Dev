@@ -62,7 +62,7 @@ fun ArchitectureGuideScreen(modifier: Modifier = Modifier) {
                     color = TextPrimary
                 )
                 Text(
-                    text = "Android · Kotlin · Gemini 3.8 Flash · workspace local",
+                    text = "Android · Kotlin · Agente Autônomo Estilo Claude Code",
                     fontSize = 11.sp,
                     color = TextSecondary
                 )
@@ -124,54 +124,50 @@ fun ArchitectureGuideScreen(modifier: Modifier = Modifier) {
 }
 
 private val REAL_STACK = """
-# Stack implementada (não é Next.js / Docker)
+# Stack implementada (Agente Autônomo Estilo Claude Code)
 
 • App Android nativo (Kotlin + Jetpack Compose)
-• Modelo: gemini-3.8-flash via Generative Language API
-• GitHub REST: leitura de árvore + contents; commit opcional (Contents API)
-• Workspace isolado em filesDir/devagent-workspace
-• Tools: list_files, read_file, write_file, run_command (pwd|ls|cat)
+• Modelos: Gemini 3.8 Flash + OpenRouter (Claude, DeepSeek, Qwen, etc.)
+• GitHub REST + Git Data API: leitura de até 120 arquivos + commit atômico multi-arquivo
+• Workspace local editável em filesDir/devagent-workspace + Editor de Código integrado
+• Tools: list_files, search_files, read_file, edit_file (cirúrgico), write_file, delete_file, run_command
+• Comandos do terminal: pwd, ls, cat, grep, find, head, tail, wc, tree
 
 Camadas:
-  UI (Compose) → ViewModel → DevAgentEngine → AgentToolLoop
+  UI (Compose) → ViewModel → DevAgentEngine → AgentToolLoop (até 18 passos)
        → AgentToolCoordinator → WorkspaceFileTools / WorkspaceCommandRunner
-       → GeminiClient / GitHubRepositoryClient
+       → LlmGateway (Gemini / OpenRouter) / GitHubRepositoryClient
 """.trimIndent()
 
 private val AGENT_LOOP = """
-# Ciclo real do agente
+# Ciclo autônomo do agente (Claude Code Style)
 
-1. Classifica intenção (ChatIntentClassifier) — routing, não autorização
-2. Monta system prompt + contexto do repo (até ~30 arquivos)
-3. Chama Gemini; se a resposta for JSON de tool, executa no workspace
-4. write_file exige: modo BUILD + IMPLEMENTATION_REQUEST + confirmação na UI
-5. Após aprovação, grava no workspace local
-6. Commit no GitHub é manual (botão) e só com token contents:write
-
-Limite: até 6 tool calls por turno.
+1. Mantém histórico multi-turn e índice completo da árvore de arquivos do workspace
+2. Extrai raciocínio + JSON de ferramenta (mesmo dentro de blocos ```json ou após explicação)
+3. Pesquisa com search_files / lê com read_file e aplica mudanças cirúrgicas com edit_file
+4. Modo ⚡ Auto (padrão em Construir): executa edições encadeadas autonomamente e anexa o diff colorido em cada card
+5. Modo 🔒 Diff: abre diálogo de aprovação humana antes de cada gravação
+6. Auto-recuperação: se um caminho ou old_text falhar, devolve o erro ao modelo para ele corrigir e continuar
+7. Aba Commit envia todos os arquivos alterados em um único commit Git atômico (Git Trees API)
 """.trimIndent()
 
 private val SECURITY = """
 # Segurança implementada
 
-• Path canonical — bloqueia traversal e caminhos absolutos
-• Sem shell: ProcessBuilder só com pwd, ls, cat
+• Path canonical — bloqueia path traversal (../) e caminhos absolutos
+• Sem shell arbitrário: comandos restritos ao workspace (pwd, ls, cat, grep, find, head, tail, wc, tree)
 • Sem pipes, ;, |, $, ``
-• Token GitHub só em memória de sessão
-• Arquivos sensíveis (.env, keys, keystores) ignorados na leitura
-• Mutação só com confirmação humana explícita
-• Não há Docker, gVisor nem micro-VM neste app
+• Token GitHub mantido apenas em memória de sessão
+• Arquivos sensíveis (.env, keys, keystores) ignorados na leitura remota
+• Modos ASK e IMAGINE bloqueiam qualquer mutação na camada de política (ToolExecutionPolicy)
 """.trimIndent()
 
 private val LIMITS = """
-# Limites honestos
+# Limites honestos do ambiente local no Android
 
-• Não executa Gradle/pytest/npm do projeto alvo
-• Terminal só pwd / ls / cat
-• Contexto limitado (~30 arquivos prioritários)
-• Commit é arquivo a arquivo (Contents API), não git push multi-file
-• Branch protegida / token sem write → commit falha com erro claro
-• Histórico de chat não persiste entre sessões
+• Não compila APK / Gradle diretamente dentro do celular (o push para o GitHub dispara o workflow Build APK no GitHub Actions, e o app baixa e instala a nova release automaticamente)
+• Repositórios com mais de 120 arquivos priorizam código-fonte principal (src/main, src/test, configs)
+• Branch protegida / token sem contents:write → commit falha com mensagem clara
 """.trimIndent()
 
 @Composable

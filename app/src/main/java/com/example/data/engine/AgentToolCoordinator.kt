@@ -1,13 +1,13 @@
 package com.example.data.engine
 
 import com.example.data.model.AgentMode
+import java.io.IOException
 
 /**
  * Bridges untrusted model output to the allowlisted workspace tools.
  *
- * This coordinator is deliberately side-effect-free unless a request parses and the
- * workspace adapter's policy gate allows it. The caller must obtain user confirmation
- * outside the model response and pass it explicitly for mutations.
+ * Recovers gracefully from file/path I/O errors during tool execution so the agent loop
+ * can self-correct on subsequent steps instead of aborting the whole run.
  */
 sealed class AgentToolExecution {
     data class NotToolRequest(val response: String) : AgentToolExecution()
@@ -42,35 +42,68 @@ class AgentToolCoordinator(
 
         return when (request) {
             is AgentToolRequest.ListFiles -> {
-                when (val result = workspaceTools.listFiles(request.path, mode, intent)) {
-                    is ToolDispatchResult.Executed -> {
-                        val files = result.value
-                        val shown = files.take(maxListedFiles)
-                        val suffix = if (files.size > shown.size) {
-                            "\n… e mais ${files.size - shown.size} arquivos."
-                        } else ""
-                        AgentToolExecution.Completed(
-                            toolName = "list_files",
-                            output = (shown.joinToString("\n") + suffix).take(maxOutputChars)
-                        )
+                try {
+                    when (val result = workspaceTools.listFiles(request.path, mode, intent)) {
+                        is ToolDispatchResult.Executed -> {
+                            val files = result.value
+                            val shown = files.take(maxListedFiles)
+                            val suffix = if (files.size > shown.size) {
+                                "\n… e mais ${files.size - shown.size} arquivos."
+                            } else ""
+                            AgentToolExecution.Completed(
+                                toolName = "list_files",
+                                output = (shown.joinToString("\n") + suffix).take(maxOutputChars)
+                            )
+                        }
+                        ToolDispatchResult.ConfirmationRequired ->
+                            AgentToolExecution.Rejected("A política exige confirmação para esta operação.")
+                        ToolDispatchResult.Denied ->
+                            AgentToolExecution.Rejected("A política de segurança negou a leitura solicitada.")
                     }
-                    ToolDispatchResult.ConfirmationRequired ->
-                        AgentToolExecution.Rejected("A política exige confirmação para esta operação.")
-                    ToolDispatchResult.Denied ->
-                        AgentToolExecution.Rejected("A política de segurança negou a leitura solicitada.")
+                } catch (e: IOException) {
+                    AgentToolExecution.Completed(
+                        toolName = "list_files",
+                        output = "Erro em list_files (${request.path}): ${e.message}"
+                    )
                 }
             }
             is AgentToolRequest.ReadFile -> {
-                when (val result = workspaceTools.readFile(request.path, mode, intent)) {
-                    is ToolDispatchResult.Executed -> AgentToolExecution.Completed(
+                try {
+                    when (val result = workspaceTools.readFile(request.path, mode, intent)) {
+                        is ToolDispatchResult.Executed -> AgentToolExecution.Completed(
+                            toolName = "read_file",
+                            output = result.value.take(maxOutputChars) +
+                                if (result.value.length > maxOutputChars) "\n[Conteúdo truncado pelo limite de saída.]" else ""
+                        )
+                        ToolDispatchResult.ConfirmationRequired ->
+                            AgentToolExecution.Rejected("A política exige confirmação para esta operação.")
+                        ToolDispatchResult.Denied ->
+                            AgentToolExecution.Rejected("A política de segurança negou a leitura solicitada.")
+                    }
+                } catch (e: IOException) {
+                    AgentToolExecution.Completed(
                         toolName = "read_file",
-                        output = result.value.take(maxOutputChars) +
-                            if (result.value.length > maxOutputChars) "\n[Conteúdo truncado pelo limite de saída.]" else ""
+                        output = "Erro em read_file (${request.path}): ${e.message}"
                     )
-                    ToolDispatchResult.ConfirmationRequired ->
-                        AgentToolExecution.Rejected("A política exige confirmação para esta operação.")
-                    ToolDispatchResult.Denied ->
-                        AgentToolExecution.Rejected("A política de segurança negou a leitura solicitada.")
+                }
+            }
+            is AgentToolRequest.SearchFiles -> {
+                try {
+                    when (val result = workspaceTools.searchFiles(request.query, request.path, mode, intent)) {
+                        is ToolDispatchResult.Executed -> AgentToolExecution.Completed(
+                            toolName = "search_files",
+                            output = result.value.take(maxOutputChars)
+                        )
+                        ToolDispatchResult.ConfirmationRequired ->
+                            AgentToolExecution.Rejected("A política exige confirmação para esta operação.")
+                        ToolDispatchResult.Denied ->
+                            AgentToolExecution.Rejected("A política de segurança negou a busca solicitada.")
+                    }
+                } catch (e: IOException) {
+                    AgentToolExecution.Completed(
+                        toolName = "search_files",
+                        output = "Erro em search_files (${request.query}): ${e.message}"
+                    )
                 }
             }
             is AgentToolRequest.RunCommand -> {
@@ -97,24 +130,103 @@ class AgentToolCoordinator(
                     AgentToolExecution.Rejected(e.message ?: "Comando negado.")
                 }
             }
-            is AgentToolRequest.WriteFile -> {
-                when (val result = workspaceTools.writeFile(
-                    relativePath = request.path,
-                    content = request.content,
-                    mode = mode,
-                    intent = intent,
-                    userConfirmedMutation = userConfirmedMutation
-                )) {
-                    is ToolDispatchResult.Executed ->
-                        AgentToolExecution.Completed("write_file", result.value)
-                    ToolDispatchResult.ConfirmationRequired ->
-                        AgentToolExecution.NeedsConfirmation(
-                            toolName = "write_file",
-                            path = request.path,
-                            contentPreview = request.content.take(4_000)
+            is AgentToolRequest.EditFile -> {
+                try {
+                    if (!userConfirmedMutation) {
+                        val decision = ToolExecutionPolicy.evaluate(mode, intent, ToolRisk.MUTATING, false)
+                        if (decision == ToolPolicyDecision.DENY) {
+                            return AgentToolExecution.Rejected("A política de segurança negou a alteração solicitada.")
+                        }
+                        val preview = workspaceTools.previewEditFile(
+                            relativePath = request.path,
+                            oldText = request.oldText,
+                            newText = request.newText,
+                            replaceAll = request.replaceAll
                         )
-                    ToolDispatchResult.Denied ->
-                        AgentToolExecution.Rejected("A política de segurança negou a alteração solicitada.")
+                        return AgentToolExecution.NeedsConfirmation(
+                            toolName = "edit_file",
+                            path = request.path,
+                            contentPreview = preview.take(100_000)
+                        )
+                    }
+                    when (val result = workspaceTools.editFile(
+                        relativePath = request.path,
+                        oldText = request.oldText,
+                        newText = request.newText,
+                        replaceAll = request.replaceAll,
+                        mode = mode,
+                        intent = intent,
+                        userConfirmedMutation = true
+                    )) {
+                        is ToolDispatchResult.Executed ->
+                            AgentToolExecution.Completed("edit_file", result.value)
+                        ToolDispatchResult.ConfirmationRequired ->
+                            AgentToolExecution.NeedsConfirmation(
+                                toolName = "edit_file",
+                                path = request.path,
+                                contentPreview = request.newText.take(4_000)
+                            )
+                        ToolDispatchResult.Denied ->
+                            AgentToolExecution.Rejected("A política de segurança negou a alteração solicitada.")
+                    }
+                } catch (e: IOException) {
+                    AgentToolExecution.Completed(
+                        toolName = "edit_file",
+                        output = "Erro em edit_file (${request.path}): ${e.message}"
+                    )
+                }
+            }
+            is AgentToolRequest.WriteFile -> {
+                try {
+                    when (val result = workspaceTools.writeFile(
+                        relativePath = request.path,
+                        content = request.content,
+                        mode = mode,
+                        intent = intent,
+                        userConfirmedMutation = userConfirmedMutation
+                    )) {
+                        is ToolDispatchResult.Executed ->
+                            AgentToolExecution.Completed("write_file", result.value)
+                        ToolDispatchResult.ConfirmationRequired ->
+                            AgentToolExecution.NeedsConfirmation(
+                                toolName = "write_file",
+                                path = request.path,
+                                contentPreview = request.content.take(4_000)
+                            )
+                        ToolDispatchResult.Denied ->
+                            AgentToolExecution.Rejected("A política de segurança negou a alteração solicitada.")
+                    }
+                } catch (e: IOException) {
+                    AgentToolExecution.Completed(
+                        toolName = "write_file",
+                        output = "Erro em write_file (${request.path}): ${e.message}"
+                    )
+                }
+            }
+            is AgentToolRequest.DeleteFile -> {
+                try {
+                    when (val result = workspaceTools.deleteFile(
+                        relativePath = request.path,
+                        mode = mode,
+                        intent = intent,
+                        userConfirmedMutation = userConfirmedMutation
+                    )) {
+                        is ToolDispatchResult.Executed ->
+                            AgentToolExecution.Completed("delete_file", result.value)
+                        ToolDispatchResult.ConfirmationRequired ->
+                            AgentToolExecution.NeedsConfirmation(
+                                toolName = "delete_file",
+                                path = request.path,
+                                contentPreview = ""
+                            )
+                        ToolDispatchResult.Denied ->
+                            AgentToolExecution.Rejected("A política de segurança negou a exclusão solicitada.")
+                    }
+                } catch (e: IOException) {
+                    AgentToolExecution.Completed(
+                        toolName = "delete_file",
+                        output = "Erro em delete_file (${request.path}): ${e.message}"
+                    )
                 }
             }
         }

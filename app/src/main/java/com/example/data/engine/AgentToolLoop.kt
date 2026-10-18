@@ -9,12 +9,13 @@ sealed class AgentLoopResult {
 }
 
 /**
- * Bounded orchestration loop. Model output and tool output are untrusted data.
- * Mutation approval must come from an explicit host/UI callback, never from the model.
+ * Bounded autonomous orchestration loop (Claude Code style).
+ * Supports multi-step tool chaining (up to maxToolCalls steps), live thought step
+ * extraction, and explicit or auto-approved mutation callbacks.
  */
 class AgentToolLoop(
     private val coordinator: AgentToolCoordinator,
-    private val maxToolCalls: Int = 6
+    private val maxToolCalls: Int = 16
 ) {
     init {
         require(maxToolCalls > 0)
@@ -27,7 +28,8 @@ class AgentToolLoop(
         requestModel: suspend (conversation: String) -> Result<String>,
         confirmMutation: suspend (toolName: String, path: String, contentPreview: String) -> Boolean =
             { _, _, _ -> false },
-        onToolEvent: suspend (ToolLoopEvent) -> Unit = {}
+        onToolEvent: suspend (ToolLoopEvent) -> Unit = {},
+        onThoughtStep: suspend (String) -> Unit = {}
     ): AgentLoopResult {
         val conversation = StringBuilder(initialPrompt)
         var toolCalls = 0
@@ -55,22 +57,11 @@ class AgentToolLoop(
 
             val parsed = AgentToolRequestParser.parse(response)
             if (parsed != null) {
-                val detail = when (parsed) {
-                    is AgentToolRequest.ListFiles -> "path=${parsed.path}"
-                    is AgentToolRequest.ReadFile -> "path=${parsed.path}"
-                    is AgentToolRequest.WriteFile -> "path=${parsed.path} (${parsed.content.length} chars)"
-                    is AgentToolRequest.RunCommand -> "cmd=${parsed.command}"
+                AgentToolRequestParser.extractThoughtStep(response)?.let { step ->
+                    onThoughtStep(step)
                 }
-                val started = ToolLoopEvent.Started(
-                    toolName = when (parsed) {
-                        is AgentToolRequest.ListFiles -> "list_files"
-                        is AgentToolRequest.ReadFile -> "read_file"
-                        is AgentToolRequest.WriteFile -> "write_file"
-                        is AgentToolRequest.RunCommand -> "run_command"
-                    },
-                    detail = detail
-                )
-                onToolEvent(started)
+                val (toolName, detail) = toolMeta(parsed)
+                onToolEvent(ToolLoopEvent.Started(toolName = toolName, detail = detail))
             }
 
             val startedAt = System.currentTimeMillis()
@@ -87,12 +78,13 @@ class AgentToolLoop(
                     }
                     toolCalls++
                     val duration = System.currentTimeMillis() - startedAt
+                    val isErrorOutput = execution.output.startsWith("Erro em ")
                     onToolEvent(
                         ToolLoopEvent.Completed(
                             toolName = execution.toolName,
-                            detail = execution.toolName,
+                            detail = parsed?.let { toolMeta(it).second } ?: execution.toolName,
                             output = execution.output,
-                            success = true,
+                            success = !isErrorOutput,
                             durationMs = duration,
                             toolCallId = null
                         )
@@ -108,10 +100,15 @@ class AgentToolLoop(
                     if (finalOnly) {
                         return AgentLoopResult.Failed("Limite de ferramentas atingido.", toolCalls)
                     }
+                    // For write_file, pass the full content to the confirmation preview if available
+                    val fullPreview = when (parsed) {
+                        is AgentToolRequest.WriteFile -> parsed.content
+                        else -> execution.contentPreview
+                    }
                     val approved = confirmMutation(
                         execution.toolName,
                         execution.path,
-                        execution.contentPreview
+                        fullPreview
                     )
                     if (!approved) {
                         onToolEvent(
@@ -139,12 +136,13 @@ class AgentToolLoop(
                         is AgentToolExecution.Completed -> {
                             toolCalls++
                             val duration = System.currentTimeMillis() - startedAt
+                            val isErrorOutput = approvedExecution.output.startsWith("Erro em ")
                             onToolEvent(
                                 ToolLoopEvent.Completed(
                                     toolName = approvedExecution.toolName,
                                     detail = execution.path,
                                     output = approvedExecution.output,
-                                    success = true,
+                                    success = !isErrorOutput,
                                     durationMs = duration
                                 )
                             )
@@ -170,14 +168,7 @@ class AgentToolLoop(
                 is AgentToolExecution.Rejected -> {
                     onToolEvent(
                         ToolLoopEvent.Completed(
-                            toolName = parsed?.let {
-                                when (it) {
-                                    is AgentToolRequest.ListFiles -> "list_files"
-                                    is AgentToolRequest.ReadFile -> "read_file"
-                                    is AgentToolRequest.WriteFile -> "write_file"
-                                    is AgentToolRequest.RunCommand -> "run_command"
-                                }
-                            } ?: "unknown",
+                            toolName = parsed?.let { toolMeta(it).first } ?: "unknown",
                             detail = execution.reason,
                             output = execution.reason,
                             success = false,
@@ -188,5 +179,15 @@ class AgentToolLoop(
                 }
             }
         }
+    }
+
+    private fun toolMeta(request: AgentToolRequest): Pair<String, String> = when (request) {
+        is AgentToolRequest.ListFiles -> "list_files" to "path=${request.path}"
+        is AgentToolRequest.ReadFile -> "read_file" to "path=${request.path}"
+        is AgentToolRequest.SearchFiles -> "search_files" to "query='${request.query}' (${request.path})"
+        is AgentToolRequest.EditFile -> "edit_file" to "path=${request.path}"
+        is AgentToolRequest.WriteFile -> "write_file" to "path=${request.path} (${request.content.length} chars)"
+        is AgentToolRequest.DeleteFile -> "delete_file" to "path=${request.path}"
+        is AgentToolRequest.RunCommand -> "run_command" to "cmd=${request.command}"
     }
 }

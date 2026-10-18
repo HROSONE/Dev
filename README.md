@@ -1,43 +1,36 @@
 # DevAgent
 
-App **Android** (Kotlin + Jetpack Compose) com agente de código local.
+App **Android** (Kotlin + Jetpack Compose) com agente autônomo de engenharia de software estilo **Claude Code** e editor de código local integrado.
 
-Modelo padrão: **`gemini-3.8-flash`**.
+Provedores suportados: **Google Gemini** (`gemini-3.8-flash`) e **OpenRouter** (Claude Sonnet, DeepSeek, Qwen, etc.).
 
 ## O que é real
 
 | Capacidade | Status |
 |---|---|
-| Gemini 3.8 Flash | ✅ |
-| Ler repositório GitHub (REST) | ✅ |
-| Workspace local isolado | ✅ |
-| Tools: list / read / write / run_command | ✅ |
-| Comandos: `pwd`, `ls`, `cat` | ✅ |
-| Confirmação humana + diff antes de gravar | ✅ |
-| Terminal da UI ligado ao workspace | ✅ |
-| Commit no GitHub (Contents API, 1 arquivo) | ✅ (token `contents:write`) |
-| Docker / gVisor / Next.js backend | ❌ não existe neste app |
+| Gemini 3.8 Flash + OpenRouter | ✅ |
+| Ler repositório GitHub (até 120 arquivos) | ✅ |
+| Workspace local isolado + Editor de Código na UI | ✅ |
+| Tools: `list_files`, `search_files`, `read_file`, `edit_file`, `write_file`, `delete_file`, `run_command` | ✅ |
+| Edição cirúrgica (`edit_file` com `old_text` → `new_text`) e auto-recuperação de erros | ✅ |
+| Modo Autônomo (`⚡ Auto`) ou Revisão por Diff (`🔒 Diff`) | ✅ |
+| Comandos do terminal: `pwd`, `ls`, `cat`, `grep`, `find`, `head`, `tail`, `wc`, `tree` | ✅ |
+| Commit atômico multi-arquivo no GitHub (Git Data API) + commit individual | ✅ (token `contents:write`) |
+| Auto-Update via GitHub Releases (`HROSONE/Dev`) | ✅ |
 
 ## Setup
 
-1. `.env.example` → `.env` com `GEMINI_API_KEY=...`
-2. Build no Android Studio / AI Studio
+1. `.env.example` → `.env` com `GEMINI_API_KEY=...` (ou configure direto na engrenagem dentro do app)
+2. Build no Android Studio / GitHub Actions (`Build APK`)
 3. Conecte `owner/repo` (token opcional; use `contents:write` se for commitar)
 
-## Fluxo
+## Fluxo Autônomo (Estilo Claude Code)
 
-1. Conectar repo → arquivos no `filesDir/devagent-workspace`
-2. Modo **Construir** → pedir alteração
-3. Aprovar no diálogo (diff + prévia)
-4. Arquivo grava no workspace
-5. Aba **Sandbox → Commit** → envia ao GitHub (se houver token)
-
-## Segurança
-
-- Path canonical (sem traversal)
-- Sem shell / pipes
-- Token só em memória de sessão
-- Mutação só com BUILD + intenção de implementação + confirmação UI
+1. Conecte um repositório → arquivos sincronizados em `filesDir/devagent-workspace`
+2. No modo **Construir (`⚡ Auto`)**, peça qualquer funcionalidade, correção ou refatoração em linguagem natural
+3. O agente pesquisa (`search_files`), lê (`read_file`), edita cirurgicamente múltiplos arquivos (`edit_file` / `write_file`) em até 18 passos encadeados e exibe o diff colorido em cada card
+4. Você também pode editar/criar/reverter arquivos manualmente na aba **Arquivos**
+5. Na aba **Arquivos → Commit**, envie todas as mudanças em um único commit atômico para o GitHub
 
 ## Testes
 
@@ -45,4 +38,4 @@ Modelo padrão: **`gemini-3.8-flash`**.
 gradle testDebugUnitTest
 ```
 
-Inclui testes de parser, policy, intent e workspace.
+Inclui testes de parser, policy, intent, edições cirúrgicas, busca e workspace.

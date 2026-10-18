@@ -34,15 +34,15 @@ object ChatIntentClassifier {
     )
 
     private val directActionPatterns = listOf(
-        Regex("\\b(implemente|implementar|construa|crie|adicione|remova|exclua|apague|corrija|conserte|refatore|altere|edite|modifique|aplique|execute|rode|instale|publique|envie|fa[cç]a\\s+merge|fa[cç]a\\s+(?:a\\s+)?altera[cç][aã]o|atualize|integre|configure|migre|substitua|repare)\\b"),
-        Regex("\\b(implement|create|add|remove|delete|fix|refactor|change|edit|modify|apply|run|install|publish|merge|update|integrate|configure|migrate|replace|repair)\\b")
+        Regex("\\b(implemente|implementar|construa|crie|adicione|remova|exclua|apague|corrija|conserte|refatore|altere|edite|modifique|aplique|execute|rode|instale|publique|envie|fa[cç]a\\s+merge|fa[cç]a\\s+(?:a\\s+)?altera[cç][aã]o|atualize|integre|configure|migre|substitua|repare|melhore|otimize|ajuste|reescreva)\\b"),
+        Regex("\\b(implement|create|add|remove|delete|fix|refactor|change|edit|modify|apply|run|install|publish|merge|update|integrate|configure|migrate|replace|repair|improve|optimize)\\b")
     )
 
     // Polite, explicit requests are actions even when phrased as questions.
     private val explicitActionRequestPatterns = listOf(
-        Regex("\\b(?:pode|poderia|consegue|conseguiria)\\s+(?:por\\s+favor\\s+)?(?:me\\s+)?(?:implementar|criar|adicionar|remover|excluir|apagar|corrigir|consertar|refatorar|alterar|editar|modificar|aplicar|executar|rodar|instalar|publicar|integrar|configurar|atualizar|substituir)\\b"),
-        Regex("\\b(?:can|could|would\\s+you)\\s+(?:please\\s+)?(?:implement|create|add|remove|delete|fix|refactor|change|edit|modify|apply|run|install|publish|integrate|configure|update|replace)\\b"),
-        Regex("\\b(?:quero|preciso|solicito)\\s+que\\s+(?:voc[eê]\\s+)?(?:implemente|crie|adicione|remova|corrija|refatore|altere|edite|modifique|execute|publique|integre|configure|atualize)\\b")
+        Regex("\\b(?:pode|poderia|consegue|conseguiria)\\s+(?:por\\s+favor\\s+)?(?:me\\s+)?(?:implementar|criar|adicionar|remover|excluir|apagar|corrigir|consertar|refatorar|alterar|editar|modificar|aplicar|executar|rodar|instalar|publicar|integrar|configurar|atualizar|substituir|melhorar|ajustar)\\b"),
+        Regex("\\b(?:can|could|would\\s+you)\\s+(?:please\\s+)?(?:implement|create|add|remove|delete|fix|refactor|change|edit|modify|apply|run|install|publish|integrate|configure|update|replace|improve)\\b"),
+        Regex("\\b(?:quero|preciso|solicito|gostaria)\\s+que\\s+(?:voc[eê]\\s+)?(?:implemente|crie|adicione|remova|corrija|refatore|altere|edite|modifique|execute|publique|integre|configure|atualize|melhore|ajuste|fa[cç]a)\\b")
     )
 
     private val explanationPatterns = listOf(
@@ -53,6 +53,11 @@ object ChatIntentClassifier {
         Regex("\\b(acha|acham|seria\\s+melhor|o\\s+que\\s+voc[eê]\\s+pensa|vale\\s+a\\s+pena|vamos\\s+discutir|vamos\\s+pensar|e\\s+se|opini[aã]o|concorda|faz\\s+sentido|seria\\s+poss[ií]vel)\\b"),
         Regex("\\b(do\\s+you\\s+think|should\\s+we|is\\s+it\\s+better|is\\s+it\\s+worth|what\\s+if|discuss|your\\s+opinion)\\b")
     )
+
+    fun hasExplicitNoChange(message: String): Boolean {
+        val text = message.lowercase().replace(normalizeWhitespace, " ").trim()
+        return preservePatterns.any { it.containsMatchIn(text) }
+    }
 
     fun classify(message: String): ChatIntent {
         val text = message.lowercase().replace(normalizeWhitespace, " ").trim()
@@ -97,14 +102,14 @@ object ChatIntentClassifier {
 
     fun instructionFor(intent: ChatIntent): String = when (intent) {
         ChatIntent.DISCUSSION ->
-            "INTENÇÃO: CONVERSA/DISCUSSÃO. Responda à pergunta ou discuta alternativas. Não altere arquivos nem alegue que uma ação foi autorizada. Preserve o estado do projeto."
+            "INTENÇÃO: CONVERSA/DISCUSSÃO. Você pode inspecionar e ler arquivos se necessário para responder com precisão, mas não altere arquivos."
         ChatIntent.EXPLANATION ->
-            "INTENÇÃO: EXPLICAÇÃO. Ensine ou explique o assunto; não altere arquivos, não execute comandos e não transforme instruções hipotéticas em ações."
+            "INTENÇÃO: EXPLICAÇÃO. Inspecione os arquivos necessários e explique com clareza; não altere arquivos."
         ChatIntent.PLANNING ->
-            "INTENÇÃO: PLANEJAMENTO. Entregue etapas, riscos e critérios de validação. Não implemente nem execute comandos sem um pedido separado e explícito."
+            "INTENÇÃO: PLANEJAMENTO. Inspecione o projeto e entregue etapas claras, arquivos afetados e critérios de validação."
         ChatIntent.IMPLEMENTATION_REQUEST ->
-            "INTENÇÃO: PEDIDO DE IMPLEMENTAÇÃO. Execute apenas ações realmente solicitadas e permitidas pelas ferramentas disponíveis. Verifique autorização e escopo antes de qualquer ação mutável; nunca alegue ações que não ocorreram."
+            "INTENÇÃO: IMPLEMENTAÇÃO AUTÔNOMA (ESTILO CLAUDE CODE). Pesquise, leia os arquivos relevantes, aplique as edições cirúrgicas necessárias (edit_file ou write_file) e verifique o resultado antes de dar a resposta final."
         ChatIntent.AMBIGUOUS ->
-            "INTENÇÃO: AMBÍGUA. Responda de forma informativa ou faça uma pergunta curta para esclarecer. Não assuma autorização para editar arquivos ou executar comandos."
+            "INTENÇÃO: EXPLORAÇÃO. Use as ferramentas de leitura se precisar de contexto ou responda de forma direta."
     }
 }

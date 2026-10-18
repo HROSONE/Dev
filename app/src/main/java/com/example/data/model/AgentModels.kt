@@ -3,7 +3,7 @@ package com.example.data.model
 enum class AgentMode(val label: String, val subtitle: String, val iconDescription: String) {
     ASK("Pergunte", "Consultas rápidas e explicações", "Modo Pergunta"),
     IMAGINE("Imagine", "Arquitetura e especificações", "Modo Especificação"),
-    BUILD("Construir", "Código com confirmação humana", "Modo Construtor")
+    BUILD("Construir", "Edição autônoma e código real", "Modo Construtor")
 }
 
 enum class ReasoningSpeed(val label: String, val modelName: String, val badge: String) {
@@ -41,7 +41,10 @@ data class OpenRouterModelPreset(
 enum class ToolType(val displayName: String, val category: String) {
     LIST_FILES("list_files", "Workspace"),
     READ_FILE("read_file", "Workspace"),
+    SEARCH_FILES("search_files", "Workspace"),
+    EDIT_FILE("edit_file", "Workspace"),
     WRITE_FILE("write_file", "Workspace"),
+    DELETE_FILE("delete_file", "Workspace"),
     RUN_COMMAND("run_command", "Sandbox"),
     READ_GITHUB_REPO("read_github_repo", "GitHub API"),
     COMMIT_GITHUB("commit_github", "GitHub API")

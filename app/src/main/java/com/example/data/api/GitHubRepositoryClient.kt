@@ -22,8 +22,8 @@ import java.util.concurrent.TimeUnit
 class GitHubRepositoryClient(
     private val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .callTimeout(45, TimeUnit.SECONDS)
+        .readTimeout(25, TimeUnit.SECONDS)
+        .callTimeout(90, TimeUnit.SECONDS)
         .build()
 ) {
     data class RepositorySnapshot(
@@ -428,10 +428,10 @@ class GitHubRepositoryClient(
     }
 
     private companion object {
-        const val DEFAULT_MAX_FILES = 30
-        const val MAX_FILE_BYTES = 80_000L
+        const val DEFAULT_MAX_FILES = 120
+        const val MAX_FILE_BYTES = 200_000L
         const val MAX_BATCH_FILES = 50
-        const val MAX_TOTAL_CHARACTERS = 400_000
-        const val REPOSITORY_READ_TIMEOUT_MS = 90_000L
+        const val MAX_TOTAL_CHARACTERS = 1_200_000
+        const val REPOSITORY_READ_TIMEOUT_MS = 120_000L
     }
 }
