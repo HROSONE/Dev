@@ -42,6 +42,7 @@ fun SandboxWorkspaceScreen(
     isCommitting: Boolean = false,
     lastCommitStatus: String = "",
     onCommitFile: (String) -> Unit = {},
+    onCommitModifiedFiles: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -344,6 +345,28 @@ fun SandboxWorkspaceScreen(
                     )
 
                     val modified = files.filter { it.isModified }
+                    if (modified.isNotEmpty()) {
+                        Text(
+                            text = "${modified.size} arquivo(s) alterado(s). Envie tudo em um único commit para manter as mudanças juntas.",
+                            fontSize = 12.sp,
+                            color = TextSecondary
+                        )
+                        Button(
+                            onClick = onCommitModifiedFiles,
+                            enabled = hasWriteToken && !isCommitting && modified.size <= 50,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)
+                        ) {
+                            Text(
+                                if (isCommitting) "Enviando…" else "Commit único · ${modified.size} arquivo(s)",
+                                color = DarkBackground,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        if (modified.size > 50) {
+                            Text("O limite por commit é de 50 arquivos.", fontSize = 11.sp, color = AccentYellow)
+                        }
+                    }
                     if (modified.isEmpty()) {
                         Text(
                             text = "Nenhum arquivo modificado no workspace.",
