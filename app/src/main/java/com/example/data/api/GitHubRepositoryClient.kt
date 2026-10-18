@@ -209,6 +209,110 @@ class GitHubRepositoryClient(
         }
     }
 
+    /**
+     * Publishes multiple workspace files as one atomic Git commit.
+     * The branch ref is updated only after every blob, tree and commit was created.
+     */
+    suspend fun commitFiles(
+        repositoryFullName: String,
+        files: Map<String, String>,
+        commitMessage: String,
+        token: String,
+        branch: String? = null
+    ): Result<CommitResult> = withContext(Dispatchers.IO) {
+        runCatching {
+            if (token.isBlank()) throw IOException("É necessário um token GitHub com permissão contents:write.")
+            if (files.isEmpty()) throw IllegalArgumentException("Nenhum arquivo para enviar.")
+            if (files.size > MAX_BATCH_FILES) throw IllegalArgumentException("Limite de $MAX_BATCH_FILES arquivos por commit.")
+            files.keys.forEach { path ->
+                if (path.isBlank() || path.startsWith("/") || path.split("/").any { it == ".." || it.isBlank() }) {
+                    throw IllegalArgumentException("Caminho de arquivo inválido: $path")
+                }
+            }
+
+            val fullName = normalizeRepositoryName(repositoryFullName)
+            val authToken = token.trim()
+            val repository = getJson("https://api.github.com/repos/$fullName", authToken)
+            val targetBranch = branch ?: repository.getString("default_branch")
+            val ref = getJson("https://api.github.com/repos/$fullName/git/ref/heads/${Uri.encode(targetBranch)}", authToken)
+            val parentSha = ref.getJSONObject("object").getString("sha")
+            val parentCommit = getJson("https://api.github.com/repos/$fullName/git/commits/$parentSha", authToken)
+            val baseTreeSha = parentCommit.getJSONObject("tree").getString("sha")
+
+            val treeEntries = org.json.JSONArray()
+            files.toSortedMap().forEach { (path, content) ->
+                val blobPayload = JSONObject().apply {
+                    put("content", content)
+                    put("encoding", "utf-8")
+                }
+                val blob = requestJson(
+                    "POST",
+                    "https://api.github.com/repos/$fullName/git/blobs",
+                    authToken,
+                    blobPayload
+                )
+                treeEntries.put(JSONObject().apply {
+                    put("path", path)
+                    put("mode", "100644")
+                    put("type", "blob")
+                    put("sha", blob.getString("sha"))
+                })
+            }
+
+            val tree = requestJson(
+                "POST",
+                "https://api.github.com/repos/$fullName/git/trees",
+                authToken,
+                JSONObject().put("base_tree", baseTreeSha).put("tree", treeEntries)
+            )
+            val message = commitMessage.take(200).ifBlank { "DevAgent: atualiza ${files.size} arquivos" }
+            val commit = requestJson(
+                "POST",
+                "https://api.github.com/repos/$fullName/git/commits",
+                authToken,
+                JSONObject().put("message", message)
+                    .put("tree", tree.getString("sha"))
+                    .put("parents", org.json.JSONArray().put(parentSha))
+            )
+            val newSha = commit.getString("sha")
+            requestJson(
+                "PATCH",
+                "https://api.github.com/repos/$fullName/git/refs/heads/${Uri.encode(targetBranch)}",
+                authToken,
+                JSONObject().put("sha", newSha).put("force", false)
+            )
+            CommitResult(
+                path = files.keys.sorted().joinToString(", "),
+                commitSha = newSha,
+                htmlUrl = commit.optString("html_url"),
+                message = message
+            )
+        }
+    }
+
+    private fun requestJson(method: String, url: String, token: String, payload: JSONObject): JSONObject {
+        val body = payload.toString().toRequestBody("application/json".toMediaType())
+        val builder = Request.Builder()
+            .url(url)
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("Authorization", "Bearer $token")
+        when (method) {
+            "POST" -> builder.post(body)
+            "PATCH" -> builder.patch(body)
+            else -> throw IllegalArgumentException("Método HTTP não permitido: $method")
+        }
+        http.newCall(builder.build()).execute().use { response ->
+            val responseBody = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                val detail = try { JSONObject(responseBody).optString("message").take(240) }
+                catch (_: Exception) { response.message }
+                throw IOException("GitHub $method HTTP ${response.code}: $detail")
+            }
+            return JSONObject(responseBody)
+        }
+    }
+
     private fun filePriority(path: String): Int {
         val normalized = path.lowercase()
         val name = normalized.substringAfterLast('/')
@@ -326,6 +430,7 @@ class GitHubRepositoryClient(
     private companion object {
         const val DEFAULT_MAX_FILES = 30
         const val MAX_FILE_BYTES = 80_000L
+        const val MAX_BATCH_FILES = 50
         const val MAX_TOTAL_CHARACTERS = 400_000
         const val REPOSITORY_READ_TIMEOUT_MS = 90_000L
     }
