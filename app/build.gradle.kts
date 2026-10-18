@@ -70,6 +70,58 @@ android {
   }
 }
 
+// Baixa e empacota automaticamente o motor nativo Android arm64 do llama.cpp (libllama_server.so + libs)
+// em src/main/jniLibs/arm64-v8a durante o assembleDebug/assembleRelease sem precisar alterar .github/workflows.
+val prepareLlamaNativeEngine by tasks.registering {
+  val jniArm64Dir = file("src/main/jniLibs/arm64-v8a")
+  onlyIf { !file("src/main/jniLibs/arm64-v8a/libllama_server.so").exists() }
+  doLast {
+    jniArm64Dir.mkdirs()
+    try {
+      val pyScript = listOf(
+        "import json, os, shutil, sys, tarfile, urllib.request",
+        "jni_dir = sys.argv[1]",
+        "os.makedirs(jni_dir, exist_ok=True)",
+        "req = urllib.request.Request('https://api.github.com/repos/ggml-org/llama.cpp/releases/latest', headers={'User-Agent': 'DevAgent-Gradle'})",
+        "data = json.loads(urllib.request.urlopen(req, timeout=30).read().decode('utf-8'))",
+        "urls = [a.get('browser_download_url') for a in data.get('assets', []) if a.get('name', '').endswith('-bin-android-arm64.tar.gz')]",
+        "if urls:",
+        "    archive = '/tmp/llama-android-arm64.tar.gz'",
+        "    urllib.request.urlretrieve(urls[0], archive)",
+        "    extract_dir = '/tmp/llama_android_extract'",
+        "    shutil.rmtree(extract_dir, ignore_errors=True)",
+        "    os.makedirs(extract_dir, exist_ok=True)",
+        "    tarfile.open(archive, 'r:gz').extractall(extract_dir)",
+        "    for root, _, files in os.walk(extract_dir):",
+        "        for f in files:",
+        "            full = os.path.realpath(os.path.join(root, f))",
+        "            if not os.path.isfile(full): continue",
+        "            if f == 'llama-server':",
+        "                dst = os.path.join(jni_dir, 'libllama_server.so')",
+        "                shutil.copy2(full, dst); os.chmod(dst, 0o755)",
+        "            elif f.startswith('lib') and '.so' in f:",
+        "                dst = os.path.join(jni_dir, f.split('.so')[0] + '.so')",
+        "                shutil.copy2(full, dst); os.chmod(dst, 0o755)",
+        "for nr in ['/usr/local/lib/android/sdk/ndk', os.environ.get('ANDROID_HOME', '') + '/ndk', os.environ.get('ANDROID_SDK_ROOT', '') + '/ndk']:",
+        "    if os.path.isdir(nr):",
+        "        for r, _, fs in os.walk(nr):",
+        "            if 'libc++_shared.so' in fs and 'aarch64-linux-android' in r:",
+        "                dst = os.path.join(jni_dir, 'libc++_shared.so')",
+        "                if not os.path.exists(dst): shutil.copy2(os.path.join(r, 'libc++_shared.so'), dst); os.chmod(dst, 0o755)",
+        "                break"
+      ).joinToString("\n")
+      val proc = ProcessBuilder("python3", "-c", pyScript, jniArm64Dir.absolutePath).inheritIO().start()
+      proc.waitFor()
+    } catch (e: Exception) {
+      println("Aviso: falha opcional ao empacotar llama-server: " + e.message)
+    }
+  }
+}
+
+tasks.matching { it.name == "mergeDebugJniLibFolders" || it.name == "mergeReleaseJniLibFolders" }.configureEach {
+  dependsOn(prepareLlamaNativeEngine)
+}
+
 secrets {
   propertiesFileName = ".env"
   defaultPropertiesFileName = ".env.example"
