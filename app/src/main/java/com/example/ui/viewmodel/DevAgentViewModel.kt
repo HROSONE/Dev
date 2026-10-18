@@ -356,6 +356,77 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+
+    fun commitModifiedFilesToGitHub(commitMessage: String = "") {
+        val state = _uiState.value
+        val repo = state.activeRepo
+        val modified = state.repoFiles.filter { it.isModified }
+        if (repo.isBlank()) {
+            _uiState.update { it.copy(lastCommitStatus = "Conecte um repositório antes.") }
+            return
+        }
+        if (sessionToken.isBlank()) {
+            _uiState.update { it.copy(lastCommitStatus = "Token contents:write necessário.") }
+            return
+        }
+        if (modified.isEmpty()) {
+            _uiState.update { it.copy(lastCommitStatus = "Nenhum arquivo modificado para enviar.") }
+            return
+        }
+        if (modified.size > 50) {
+            _uiState.update { it.copy(lastCommitStatus = "Limite de 50 arquivos por commit. Divida as alterações.") }
+            return
+        }
+        if (state.isCommitting) return
+        _uiState.update { it.copy(isCommitting = true, lastCommitStatus = "Preparando ${modified.size} arquivo(s)…") }
+        viewModelScope.launch {
+            try {
+                val contents = withContext(Dispatchers.IO) {
+                    val root = workspaceDir.canonicalFile
+                    modified.associate { entry ->
+                        val target = File(root, entry.path).canonicalFile
+                        if (target == root || !target.toPath().startsWith(root.toPath())) {
+                            throw IllegalArgumentException("Caminho fora do workspace: ${entry.path}")
+                        }
+                        if (!target.isFile) throw IllegalArgumentException("Arquivo não encontrado: ${entry.path}")
+                        entry.path to target.readText(Charsets.UTF_8)
+                    }
+                }
+                val msg = commitMessage.ifBlank { "DevAgent: atualiza ${contents.size} arquivos" }
+                githubClient.commitFiles(repo, contents, msg, sessionToken, defaultBranch).fold(
+                    onSuccess = { commit ->
+                        repositoryBaseline = repositoryBaseline.orEmpty() + contents
+                        _uiState.update { current ->
+                            current.copy(
+                                isCommitting = false,
+                                lastCommitStatus = "Commit OK: ${commit.commitSha.take(7)} · ${contents.size} arquivo(s)",
+                                repoFiles = current.repoFiles.map { file ->
+                                    contents[file.path]?.let { content ->
+                                        file.copy(content = content, isModified = false)
+                                    } ?: file
+                                },
+                                selectedFile = current.selectedFile?.let { selected ->
+                                    contents[selected.path]?.let { content ->
+                                        selected.copy(content = content, isModified = false)
+                                    } ?: selected
+                                }
+                            )
+                        }
+                    },
+                    onFailure = { err ->
+                        _uiState.update {
+                            it.copy(isCommitting = false, lastCommitStatus = err.message ?: "Falha no commit em lote")
+                        }
+                    }
+                )
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(isCommitting = false, lastCommitStatus = e.message ?: "Falha ao preparar commit em lote")
+                }
+            }
+        }
+    }
+
     fun commitFileToGitHub(path: String, commitMessage: String = "") {
         val repo = _uiState.value.activeRepo
         if (repo.isBlank()) {
