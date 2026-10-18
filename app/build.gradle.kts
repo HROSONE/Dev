@@ -85,6 +85,7 @@ val prepareLlamaNativeEngine by tasks.registering {
         "req = urllib.request.Request('https://api.github.com/repos/ggml-org/llama.cpp/releases/latest', headers={'User-Agent': 'DevAgent-Gradle'})",
         "data = json.loads(urllib.request.urlopen(req, timeout=30).read().decode('utf-8'))",
         "urls = [a.get('browser_download_url') for a in data.get('assets', []) if a.get('name', '').endswith('-bin-android-arm64.tar.gz')]",
+        "if not urls: raise RuntimeError('A release do llama.cpp não contém binário Android arm64 pré-compilado; não é possível empacotar libllama_server.so automaticamente.')",
         "if urls:",
         "    archive = '/tmp/llama-android-arm64.tar.gz'",
         "    urllib.request.urlretrieve(urls[0], archive)",
@@ -111,9 +112,13 @@ val prepareLlamaNativeEngine by tasks.registering {
         "                break"
       ).joinToString("\n")
       val proc = ProcessBuilder("python3", "-c", pyScript, jniArm64Dir.absolutePath).inheritIO().start()
-      proc.waitFor()
+      val exitCode = proc.waitFor()
+      val server = file("src/main/jniLibs/arm64-v8a/libllama_server.so")
+      if (exitCode != 0 || !server.isFile || server.length() < 100_000L) {
+        throw GradleException("Motor local do Qwen não foi empacotado: libllama_server.so ausente/inválida. A compilação foi interrompida para impedir publicar APK sem o motor nativo.")
+      }
     } catch (e: Exception) {
-      println("Aviso: falha opcional ao empacotar llama-server: " + e.message)
+      throw GradleException("Falha obrigatória ao preparar o motor llama.cpp para Android arm64; APK não será publicado sem libllama_server.so.", e)
     }
   }
 }
