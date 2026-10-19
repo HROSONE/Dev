@@ -3,12 +3,6 @@ package com.example.data.engine
 import com.example.data.model.AgentMode
 import java.io.IOException
 
-/**
- * Bridges untrusted model output to the allowlisted workspace tools.
- *
- * Recovers gracefully from file/path I/O errors during tool execution so the agent loop
- * can self-correct on subsequent steps instead of aborting the whole run.
- */
 sealed class AgentToolExecution {
     data class NotToolRequest(val response: String) : AgentToolExecution()
     data class Completed(val toolName: String, val output: String) : AgentToolExecution()
@@ -31,6 +25,9 @@ class AgentToolCoordinator(
         require(maxOutputChars > 0)
     }
 
+    fun verifyFileSyntax(relativePath: String): SyntaxCheckResult? =
+        workspaceTools.verifySyntaxDirect(relativePath)
+
     fun execute(
         modelResponse: String,
         mode: AgentMode,
@@ -39,7 +36,15 @@ class AgentToolCoordinator(
     ): AgentToolExecution {
         val request = AgentToolRequestParser.parse(modelResponse)
             ?: return AgentToolExecution.NotToolRequest(modelResponse)
+        return executeRequest(request, mode, intent, userConfirmedMutation)
+    }
 
+    fun executeRequest(
+        request: AgentToolRequest,
+        mode: AgentMode,
+        intent: ChatIntent,
+        userConfirmedMutation: Boolean = false
+    ): AgentToolExecution {
         return when (request) {
             is AgentToolRequest.ListFiles -> {
                 try {
@@ -87,6 +92,31 @@ class AgentToolCoordinator(
                     )
                 }
             }
+            is AgentToolRequest.ReadFileLines -> {
+                try {
+                    when (val result = workspaceTools.readFileLines(
+                        request.path,
+                        request.startLine,
+                        request.endLine,
+                        mode,
+                        intent
+                    )) {
+                        is ToolDispatchResult.Executed -> AgentToolExecution.Completed(
+                            toolName = "read_file_lines",
+                            output = result.value.take(maxOutputChars)
+                        )
+                        ToolDispatchResult.ConfirmationRequired ->
+                            AgentToolExecution.Rejected("A política exige confirmação para esta operação.")
+                        ToolDispatchResult.Denied ->
+                            AgentToolExecution.Rejected("A política de segurança negou a leitura solicitada.")
+                    }
+                } catch (e: IOException) {
+                    AgentToolExecution.Completed(
+                        toolName = "read_file_lines",
+                        output = "Erro em read_file_lines (${request.path}): ${e.message}"
+                    )
+                }
+            }
             is AgentToolRequest.SearchFiles -> {
                 try {
                     when (val result = workspaceTools.searchFiles(request.query, request.path, mode, intent)) {
@@ -103,6 +133,44 @@ class AgentToolCoordinator(
                     AgentToolExecution.Completed(
                         toolName = "search_files",
                         output = "Erro em search_files (${request.query}): ${e.message}"
+                    )
+                }
+            }
+            is AgentToolRequest.FindSymbol -> {
+                try {
+                    when (val result = workspaceTools.findSymbol(request.query, mode, intent)) {
+                        is ToolDispatchResult.Executed -> AgentToolExecution.Completed(
+                            toolName = "find_symbol",
+                            output = result.value.take(maxOutputChars)
+                        )
+                        ToolDispatchResult.ConfirmationRequired ->
+                            AgentToolExecution.Rejected("A política exige confirmação para esta operação.")
+                        ToolDispatchResult.Denied ->
+                            AgentToolExecution.Rejected("A política de segurança negou a busca de símbolo.")
+                    }
+                } catch (e: IOException) {
+                    AgentToolExecution.Completed(
+                        toolName = "find_symbol",
+                        output = "Erro em find_symbol (${request.query}): ${e.message}"
+                    )
+                }
+            }
+            is AgentToolRequest.VerifySyntax -> {
+                try {
+                    when (val result = workspaceTools.verifySyntax(request.path, mode, intent)) {
+                        is ToolDispatchResult.Executed -> AgentToolExecution.Completed(
+                            toolName = "verify_syntax",
+                            output = result.value.take(maxOutputChars)
+                        )
+                        ToolDispatchResult.ConfirmationRequired ->
+                            AgentToolExecution.Rejected("A política exige confirmação para esta operação.")
+                        ToolDispatchResult.Denied ->
+                            AgentToolExecution.Rejected("A política de segurança negou a verificação.")
+                    }
+                } catch (e: IOException) {
+                    AgentToolExecution.Completed(
+                        toolName = "verify_syntax",
+                        output = "Erro em verify_syntax (${request.path}): ${e.message}"
                     )
                 }
             }
@@ -173,6 +241,52 @@ class AgentToolCoordinator(
                     AgentToolExecution.Completed(
                         toolName = "edit_file",
                         output = "Erro em edit_file (${request.path}): ${e.message}"
+                    )
+                }
+            }
+            is AgentToolRequest.PatchLines -> {
+                try {
+                    if (!userConfirmedMutation) {
+                        val decision = ToolExecutionPolicy.evaluate(mode, intent, ToolRisk.MUTATING, false)
+                        if (decision == ToolPolicyDecision.DENY) {
+                            return AgentToolExecution.Rejected("A política de segurança negou a alteração solicitada.")
+                        }
+                        val preview = workspaceTools.previewPatchLines(
+                            relativePath = request.path,
+                            startLine = request.startLine,
+                            endLine = request.endLine,
+                            newText = request.newText
+                        )
+                        return AgentToolExecution.NeedsConfirmation(
+                            toolName = "patch_lines",
+                            path = request.path,
+                            contentPreview = preview.take(100_000)
+                        )
+                    }
+                    when (val result = workspaceTools.patchLines(
+                        relativePath = request.path,
+                        startLine = request.startLine,
+                        endLine = request.endLine,
+                        newText = request.newText,
+                        mode = mode,
+                        intent = intent,
+                        userConfirmedMutation = true
+                    )) {
+                        is ToolDispatchResult.Executed ->
+                            AgentToolExecution.Completed("patch_lines", result.value)
+                        ToolDispatchResult.ConfirmationRequired ->
+                            AgentToolExecution.NeedsConfirmation(
+                                toolName = "patch_lines",
+                                path = request.path,
+                                contentPreview = request.newText.take(4_000)
+                            )
+                        ToolDispatchResult.Denied ->
+                            AgentToolExecution.Rejected("A política de segurança negou a alteração solicitada.")
+                    }
+                } catch (e: IOException) {
+                    AgentToolExecution.Completed(
+                        toolName = "patch_lines",
+                        output = "Erro em patch_lines (${request.path}): ${e.message}"
                     )
                 }
             }

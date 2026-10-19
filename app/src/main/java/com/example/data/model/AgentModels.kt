@@ -1,18 +1,18 @@
 package com.example.data.model
 
 enum class AgentMode(val label: String, val subtitle: String, val iconDescription: String) {
-    ASK("Pergunte", "Consultas rápidas e explicações", "Modo Pergunta"),
-    IMAGINE("Imagine", "Arquitetura e especificações", "Modo Especificação"),
-    BUILD("Construir", "Edição autônoma e código real", "Modo Construtor")
+    ASK("Ask", "Análise de código, dúvidas e debug", "Modo Pergunta"),
+    IMAGINE("Plan", "Arquitetura, especificação e design", "Modo Arquitetura"),
+    BUILD("Build", "Geração e edição autônoma de código", "Modo Construtor")
 }
 
 enum class ReasoningSpeed(val label: String, val modelName: String, val badge: String) {
-    FAST("⚡ Rápido", "gemini-3.8-flash", "Flash"),
-    DEEP_THINKING("🧠 Raciocínio Profundo", "gemini-3.8-flash", "Flash CoT")
+    FAST("⚡ Fast · Flash", "gemini-3.8-flash", "Flash"),
+    DEEP_THINKING("🧠 Deep · CoT", "gemini-3.8-flash", "Deep CoT")
 }
 
 enum class LlmProvider(val label: String) {
-    GEMINI("Google Gemini"),
+    GEMINI("Gemini 3.8"),
     OPENROUTER("OpenRouter"),
     QWEN_CODER("Qwen 2.5 Coder")
     ;
@@ -73,9 +73,10 @@ enum class QwenModelVariant(
 
 enum class ProjectTemplate(val label: String, val description: String) {
     BLANK("Projeto em Branco", "README.md e .gitignore prontos para começar"),
-    ANDROID_COMPOSE("App Android (Kotlin + Compose)", "Estrutura Gradle Kotlin DSL + MainActivity Compose"),
-    PYTHON_APP("Projeto Python", "main.py, requirements.txt e .gitignore"),
-    WEB_APP("Web App (HTML / CSS / JS)", "index.html, styles.css e app.js interativos")
+    ANDROID_COMPOSE("Android MVVM + Compose", "Arquitetura completa: Model, ViewModel, UI Compose e Gradle Kotlin DSL"),
+    PYTHON_APP("Python CLI / Automação", "Estrutura modular src/, main.py, testes, requirements.txt"),
+    WEB_APP("Web App Moderno (SPA)", "HTML5 semântico, CSS variáveis dark mode e arquitetura JS modular"),
+    NODE_TS_API("API Node.js + TypeScript", "Servidor REST tipado com package.json, tsconfig.json e rotas")
 }
 
 data class ChatSessionSummary(
@@ -95,10 +96,14 @@ data class OpenRouterModelPreset(
 enum class ToolType(val displayName: String, val category: String) {
     LIST_FILES("list_files", "Workspace"),
     READ_FILE("read_file", "Workspace"),
+    READ_FILE_LINES("read_file_lines", "Harness"),
     SEARCH_FILES("search_files", "Workspace"),
+    FIND_SYMBOL("find_symbol", "Harness"),
     EDIT_FILE("edit_file", "Workspace"),
+    PATCH_LINES("patch_lines", "Harness"),
     WRITE_FILE("write_file", "Workspace"),
     DELETE_FILE("delete_file", "Workspace"),
+    VERIFY_SYNTAX("verify_syntax", "Harness"),
     RUN_COMMAND("run_command", "Sandbox"),
     READ_GITHUB_REPO("read_github_repo", "GitHub API"),
     COMMIT_GITHUB("commit_github", "GitHub API")

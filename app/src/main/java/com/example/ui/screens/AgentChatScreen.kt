@@ -1,26 +1,32 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
@@ -69,6 +75,7 @@ fun AgentChatScreen(
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             if (messages.isEmpty()) {
                 EmptyAgentState(
+                    activeRepo = activeRepo,
                     onSelectPreset = onQuickPromptSelected,
                     modifier = Modifier.align(Alignment.Center)
                 )
@@ -94,7 +101,7 @@ fun AgentChatScreen(
             }
         }
 
-        // Input limpo — sem chips de sugestão ocupando a tela
+        // Barra de comando focada em engenharia de software
         Surface(
             color = DarkBackground,
             modifier = Modifier.fillMaxWidth()
@@ -110,25 +117,25 @@ fun AgentChatScreen(
                     onValueChange = onPromptChange,
                     placeholder = {
                         Text(
-                            "Mensagem…",
-                            fontSize = 14.sp,
+                            "Descreva o app para criar do zero, bug para corrigir ou refatoração…",
+                            fontSize = 13.sp,
                             color = TextMuted
                         )
                     },
                     modifier = Modifier
                         .weight(1f)
                         .testTag("agent_prompt_input"),
-                    shape = RoundedCornerShape(24.dp),
+                    shape = RoundedCornerShape(20.dp),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedContainerColor = DarkSurface,
                         unfocusedContainerColor = DarkSurface,
-                        focusedBorderColor = DarkBorder,
+                        focusedBorderColor = AccentCyan,
                         unfocusedBorderColor = DarkBorder,
                         focusedTextColor = TextPrimary,
                         unfocusedTextColor = TextPrimary,
                         cursorColor = AccentCyan
                     ),
-                    maxLines = 5,
+                    maxLines = 6,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(
                         onSend = {
@@ -179,16 +186,16 @@ fun ChatMessageItem(
     modifier: Modifier = Modifier
 ) {
     if (message.role == MessageRole.USER) {
-        // Bolha do usuário alinhada à direita, só o texto
         Row(
             modifier = modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.End
         ) {
             Box(
                 modifier = Modifier
-                    .widthIn(max = 320.dp)
+                    .widthIn(max = 330.dp)
                     .clip(RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp))
-                    .background(AccentCyan.copy(alpha = 0.14f))
+                    .background(AccentCyan.copy(alpha = 0.16f))
+                    .border(0.5.dp, AccentCyan.copy(alpha = 0.35f), RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp))
                     .padding(horizontal = 14.dp, vertical = 10.dp)
             ) {
                 Text(
@@ -208,7 +215,6 @@ fun ChatMessageItem(
             modifier = modifier.fillMaxWidth().padding(vertical = 4.dp)
         )
     } else {
-        // Resposta do agente: texto limpo, sem card pesado
         Column(modifier = modifier.fillMaxWidth()) {
             if (message.thoughtSteps.isNotEmpty()) {
                 ThoughtProcessCard(
@@ -225,22 +231,14 @@ fun ChatMessageItem(
                 }
             }
             if (message.text.isNotBlank()) {
-                Text(
-                    // remove markdown ## * * excessivo na leitura rápida
-                    message.text
-                        .replace(Regex("^#{1,6}\\s*", RegexOption.MULTILINE), "")
-                        .replace("**", ""),
-                    fontSize = 15.sp,
-                    color = TextPrimary,
-                    lineHeight = 22.sp,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onCopyText(message.text) }
+                CodeAwareMessageContent(
+                    rawText = message.text,
+                    onCopyText = onCopyText
                 )
             } else if (message.isThinking && message.toolCalls.isEmpty()) {
                 Text(
-                    "…",
-                    fontSize = 15.sp,
+                    "Analisando arquitetura e planejando passos…",
+                    fontSize = 13.sp,
                     color = TextMuted
                 )
             }
@@ -248,48 +246,241 @@ fun ChatMessageItem(
     }
 }
 
+private sealed interface MessageSegment {
+    data class Prose(val text: String) : MessageSegment
+    data class CodeBlock(val language: String, val code: String) : MessageSegment
+}
+
+private val CODE_FENCE_REGEX = Regex("```([a-zA-Z0-9_+.-]*)\\s*\\n([\\s\\S]*?)```")
+
+private fun parseMessageSegments(rawText: String): List<MessageSegment> {
+    val segments = mutableListOf<MessageSegment>()
+    var lastIndex = 0
+    for (match in CODE_FENCE_REGEX.findAll(rawText)) {
+        if (match.range.first > lastIndex) {
+            val prose = rawText.substring(lastIndex, match.range.first).trim()
+            if (prose.isNotEmpty()) segments += MessageSegment.Prose(prose)
+        }
+        val lang = match.groupValues[1].trim().ifEmpty { "code" }
+        val code = match.groupValues[2].trimEnd()
+        segments += MessageSegment.CodeBlock(lang, code)
+        lastIndex = match.range.last + 1
+    }
+    if (lastIndex < rawText.length) {
+        val tail = rawText.substring(lastIndex).trim()
+        if (tail.isNotEmpty()) segments += MessageSegment.Prose(tail)
+    }
+    return if (segments.isEmpty()) listOf(MessageSegment.Prose(rawText)) else segments
+}
+
+@Composable
+private fun CodeAwareMessageContent(
+    rawText: String,
+    onCopyText: (String) -> Unit
+) {
+    val segments = remember(rawText) { parseMessageSegments(rawText) }
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        segments.forEach { segment ->
+            when (segment) {
+                is MessageSegment.Prose -> {
+                    val cleanProse = segment.text
+                        .replace(Regex("^#{1,6}\\s*", RegexOption.MULTILINE), "")
+                        .replace("**", "")
+                    Text(
+                        text = cleanProse,
+                        fontSize = 14.sp,
+                        color = TextPrimary,
+                        lineHeight = 21.sp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onCopyText(segment.text) }
+                    )
+                }
+                is MessageSegment.CodeBlock -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFF0D1117))
+                            .border(1.dp, DarkBorder, RoundedCornerShape(10.dp))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(DarkSurfaceVariant)
+                                .padding(horizontal = 10.dp, vertical = 5.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = segment.language.uppercase(),
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                color = AccentCyan
+                            )
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable { onCopyText(segment.code) }
+                                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ContentCopy,
+                                    contentDescription = "Copiar código",
+                                    tint = TextSecondary,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = "Copiar",
+                                    fontSize = 10.sp,
+                                    color = TextSecondary
+                                )
+                            }
+                        }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState())
+                                .padding(10.dp)
+                        ) {
+                            Text(
+                                text = segment.code,
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = Color(0xFFE6EDF3),
+                                lineHeight = 16.sp
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun EmptyAgentState(
+    activeRepo: String = "",
     onSelectPreset: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 28.dp),
+            .padding(horizontal = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(
-            "DevAgent",
-            fontSize = 22.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = TextPrimary
-        )
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "Pergunte, planeje ou peça mudanças no código.\nConecte um repo quando quiser contexto real.",
-            fontSize = 14.sp,
-            color = TextSecondary,
-            textAlign = TextAlign.Center,
-            lineHeight = 20.sp
-        )
-        Spacer(Modifier.height(28.dp))
-        listOf(
-            "O que você consegue fazer?",
-            "Liste os arquivos do workspace",
-            "Explique a estrutura do projeto"
-        ).forEach { sample ->
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(999.dp))
+                .background(AccentCyan.copy(alpha = 0.14f))
+                .padding(horizontal = 12.dp, vertical = 4.dp)
+        ) {
             Text(
-                sample,
-                fontSize = 14.sp,
-                color = AccentCyan,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable { onSelectPreset(sample) }
-                    .padding(vertical = 12.dp),
-                textAlign = TextAlign.Center
+                text = "SWE-AGENT HARNESS · REPOMAP · SYNTAXGUARD",
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color = AccentCyan
             )
         }
+        Spacer(Modifier.height(10.dp))
+        Text(
+            "DevAgent Studio",
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Bold,
+            color = TextPrimary
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            if (activeRepo.isNotBlank()) {
+                "Workspace ativo: $activeRepo\nCrie módulos do zero ou evolua o código existente com edição cirúrgica."
+            } else {
+                "Desenvolvimento autônomo do zero ao deploy.\nCrie um projeto novo ou aprimore qualquer repositório existente."
+            },
+            fontSize = 13.sp,
+            color = TextSecondary,
+            textAlign = TextAlign.Center,
+            lineHeight = 19.sp
+        )
+
+        Spacer(Modifier.height(20.dp))
+
+        Text(
+            text = "🚀 CRIAR DO ZERO (SCAFFOLDING COMPLETO)",
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            color = AccentGreen,
+            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
+        )
+        listOf(
+            "Crie do zero uma API modular completa no workspace com rotas, validação, testes e README",
+            "Construa do zero um Web App interativo de Kanban com persistência no localStorage e tema dark"
+        ).forEach { prompt ->
+            QuickPromptCard(
+                label = prompt,
+                accentColor = AccentGreen,
+                onClick = { onSelectPreset(prompt) }
+            )
+            Spacer(Modifier.height(6.dp))
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        Text(
+            text = "🛠️ APRIMORAR PROJETO EXISTENTE",
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            color = AccentCyan,
+            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
+        )
+        listOf(
+            "Mapeie os símbolos e a arquitetura deste projeto e aponte os 3 melhores pontos de evolução",
+            "Inspecione o código com find_symbol e verify_syntax, encontre possíveis bugs e corrija-os"
+        ).forEach { prompt ->
+            QuickPromptCard(
+                label = prompt,
+                accentColor = AccentCyan,
+                onClick = { onSelectPreset(prompt) }
+            )
+            Spacer(Modifier.height(6.dp))
+        }
+    }
+}
+
+@Composable
+private fun QuickPromptCard(
+    label: String,
+    accentColor: Color,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(DarkSurface)
+            .border(0.5.dp, DarkBorder, RoundedCornerShape(10.dp))
+            .clickable { onClick() }
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(6.dp)
+                .clip(CircleShape)
+                .background(accentColor)
+        )
+        Spacer(Modifier.width(10.dp))
+        Text(
+            text = label,
+            fontSize = 12.sp,
+            color = TextPrimary,
+            lineHeight = 16.sp
+        )
     }
 }

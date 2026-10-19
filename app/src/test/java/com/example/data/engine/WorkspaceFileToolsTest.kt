@@ -28,6 +28,58 @@ class WorkspaceFileToolsTest {
     }
 
     @Test
+    fun readFileLinesReturnsNumberedWindow() {
+        val root = temporaryFolder.newFolder("workspace")
+        java.io.File(root, "src").mkdirs()
+        java.io.File(root, "src/Lines.kt").writeText("line1\nline2\nline3\nline4\n")
+        val tools = WorkspaceFileTools(root)
+
+        val readLines = tools.readFileLines("src/Lines.kt", 2, 3, AgentMode.ASK, ChatIntent.EXPLANATION)
+        assertTrue(readLines is ToolDispatchResult.Executed)
+        val output = (readLines as ToolDispatchResult.Executed).value
+        assertTrue(output.contains("   2 | line2"))
+        assertTrue(output.contains("   3 | line3"))
+    }
+
+    @Test
+    fun findSymbolAndSyntaxVerifierWorkOnWorkspace() {
+        val root = temporaryFolder.newFolder("workspace")
+        java.io.File(root, "src").mkdirs()
+        java.io.File(root, "src/Engine.kt").writeText(
+            "package demo\n\nclass SuperEngine {\n    fun executeTask(): Boolean {\n        return true\n    }\n}\n"
+        )
+        val tools = WorkspaceFileTools(root)
+
+        val symbolSearch = tools.findSymbol("executeTask", ".", AgentMode.ASK, ChatIntent.EXPLANATION)
+        assertTrue(symbolSearch is ToolDispatchResult.Executed)
+        assertTrue((symbolSearch as ToolDispatchResult.Executed).value.contains("src/Engine.kt:4"))
+
+        val syntaxOk = tools.verifySyntax("src/Engine.kt", AgentMode.ASK, ChatIntent.EXPLANATION)
+        assertTrue(syntaxOk is ToolDispatchResult.Executed)
+        assertTrue((syntaxOk as ToolDispatchResult.Executed).value.contains("Sintaxe verificada OK"))
+    }
+
+    @Test
+    fun patchLinesReplacesTargetRangeAndRunsSyntaxCheck() {
+        val root = temporaryFolder.newFolder("workspace")
+        java.io.File(root, "src").mkdirs()
+        java.io.File(root, "src/Patch.kt").writeText("fun a() = 1\nfun b() = 2\nfun c() = 3\n")
+        val tools = WorkspaceFileTools(root)
+
+        val patched = tools.patchLines(
+            relativePath = "src/Patch.kt",
+            startLine = 2,
+            endLine = 2,
+            newText = "fun b() = 99",
+            mode = AgentMode.BUILD,
+            intent = ChatIntent.IMPLEMENTATION_REQUEST,
+            userConfirmedMutation = true
+        )
+        assertTrue(patched is ToolDispatchResult.Executed)
+        assertEquals("fun a() = 1\nfun b() = 99\nfun c() = 3\n", java.io.File(root, "src/Patch.kt").readText())
+    }
+
+    @Test
     fun searchFilesFindsMatchingLinesAcrossWorkspace() {
         val root = temporaryFolder.newFolder("workspace")
         java.io.File(root, "src").mkdirs()
@@ -57,6 +109,26 @@ class WorkspaceFileToolsTest {
 
         assertTrue(result is ToolDispatchResult.Executed)
         assertEquals("fun a() = 1\nfun b() = 42\n", java.io.File(root, "src/Hello.kt").readText())
+    }
+
+    @Test
+    fun surgicalEditFileHandlesIndentationDifferenceGracefully() {
+        val root = temporaryFolder.newFolder("workspace")
+        java.io.File(root, "src").mkdirs()
+        java.io.File(root, "src/Indented.kt").writeText("class Demo {\n        fun compute() = 10\n}\n")
+        val tools = WorkspaceFileTools(root)
+
+        val result = tools.editFile(
+            relativePath = "src/Indented.kt",
+            oldText = "  fun compute() = 10",
+            newText = "    fun compute() = 20",
+            mode = AgentMode.BUILD,
+            intent = ChatIntent.IMPLEMENTATION_REQUEST,
+            userConfirmedMutation = true
+        )
+
+        assertTrue(result is ToolDispatchResult.Executed)
+        assertTrue(java.io.File(root, "src/Indented.kt").readText().contains("fun compute() = 20"))
     }
 
     @Test

@@ -67,8 +67,6 @@ class DevAgentEngine(
         }
 
         val classified = ChatIntentClassifier.classify(userPrompt)
-        // Em modo BUILD, a menos que o usuário diga explicitamente para NÃO alterar,
-        // liberamos a intenção de implementação para que o agente opere como o Claude Code.
         val effectiveIntent = when {
             mode == AgentMode.BUILD && !ChatIntentClassifier.hasExplicitNoChange(userPrompt) ->
                 ChatIntent.IMPLEMENTATION_REQUEST
@@ -77,52 +75,20 @@ class DevAgentEngine(
             else -> classified
         }
 
-        val systemPrompt = buildString {
-            append(ChatIntentClassifier.instructionFor(effectiveIntent)).append("\n\n")
-            append(
-                "Você é o DevAgent (agente autônomo de engenharia de software estilo Claude Code). " +
-                    "Responda sempre em português, de forma direta, técnica e concisa. " +
-                    "Nunca invente conteúdos de arquivos ou saídas de comandos: sempre leia o arquivo antes de editar.\n\n" +
-                    "PROTOCOLO DE FERRAMENTAS:\n" +
-                    "Quando precisar executar uma ferramenta no workspace, responda com o objeto JSON da ferramenta " +
-                    "(pode escrever 1 frase curta de raciocínio antes do JSON se quiser):\n" +
-                    "- Listar arquivos: {\"tool\":\"list_files\",\"path\":\".\"}\n" +
-                    "- Buscar texto/código (grep): {\"tool\":\"search_files\",\"query\":\"termo\",\"path\":\".\"}\n" +
-                    "- Ler arquivo completo: {\"tool\":\"read_file\",\"path\":\"caminho/arquivo.kt\"}\n" +
-                    "- Editar trecho exato (PREFERIDO para alterar arquivos existentes): " +
-                    "{\"tool\":\"edit_file\",\"path\":\"caminho/arquivo.kt\",\"old_text\":\"trecho exato atual\",\"new_text\":\"novo trecho\"}\n" +
-                    "- Criar ou sobrescrever arquivo inteiro: {\"tool\":\"write_file\",\"path\":\"caminho/arquivo.kt\",\"content\":\"conteúdo completo\"}\n" +
-                    "- Remover arquivo: {\"tool\":\"delete_file\",\"path\":\"caminho/arquivo.kt\"}\n" +
-                    "- Executar comando de inspeção (pwd, ls, cat, grep, find, head, tail, wc, tree): " +
-                    "{\"tool\":\"run_command\",\"command\":\"grep ViewModel app/src\"}\n\n" +
-                    "REGRAS DE OURO (CLAUDE CODE):\n" +
-                    "1. Envie UMA chamada JSON de ferramenta por turno. Aguarde o resultado antes do próximo passo.\n" +
-                    "2. Para modificar código existente, SEMPRE faça read_file primeiro (se ainda não viu o arquivo completo) e prefira edit_file passando linhas suficientes em old_text para identificar o ponto único.\n" +
-                    "3. Se uma ferramenta retornar erro (ex: caminho não encontrado ou old_text não localizado), use search_files/list_files/read_file para corrigir e tente novamente.\n" +
-                    "4. Quando concluir todas as alterações solicitadas, responda em texto normal resumindo exatamente quais arquivos foram editados e o que mudou.\n"
-            )
-            when (mode) {
-                AgentMode.ASK -> append("Modo atual: PERGUNTE (somente leitura e análise; não use edit_file/write_file/delete_file).")
-                AgentMode.IMAGINE -> append("Modo atual: IMAGINE (arquitetura e plano detalhado; somente leitura).")
-                AgentMode.BUILD -> append("Modo atual: CONSTRUIR (leitura, busca e edição autônoma de arquivos habilitadas).")
-            }
-            if (repositoryName.isNotBlank()) {
-                append(" Repositório conectado: $repositoryName.")
-            }
-        }
+        val systemPrompt = buildHarnessSystemPrompt(mode, effectiveIntent, repositoryName, repositoryFiles.isEmpty())
 
         val historyContext = buildConversationHistory(conversationHistory)
         val repositoryContext = buildRepositoryContext(repositoryFiles)
         val promptWithContext = buildString {
             if (historyContext.isNotBlank()) {
-                append("HISTÓRICO RECENTE DA CONVERSA:\n")
+                append("HISTÓRICO DA SESSÃO ATUAL:\n")
                 append(historyContext)
                 append("\n\n")
             }
-            append("PEDIDO ATUAL DO USUÁRIO:\n")
+            append("TAREFA DO USUÁRIO:\n")
             append(userPrompt)
             if (repositoryContext.isNotBlank()) {
-                append("\n\nCONTEXTO DO WORKSPACE LOCAL (não confiável):\n")
+                append("\n\n")
                 append(repositoryContext)
             }
         }
@@ -130,7 +96,7 @@ class DevAgentEngine(
         val fileTools = WorkspaceFileTools(workspaceRoot)
         val commandRunner = WorkspaceCommandRunner(workspaceRoot)
         val coordinator = AgentToolCoordinator(fileTools, commandRunner)
-        val loop = AgentToolLoop(coordinator, maxToolCalls = 18)
+        val loop = AgentToolLoop(coordinator, maxToolCalls = 24)
 
         var toolsRun = 0
         var filesInspected = 0
@@ -183,14 +149,17 @@ class DevAgentEngine(
                         )
                     }
                     is ToolLoopEvent.Completed -> {
-                        if (event.toolName in setOf("read_file", "list_files", "search_files")) {
+                        if (event.toolName in setOf("read_file", "read_file_lines", "list_files", "search_files", "find_symbol")) {
                             filesInspected++
                         }
-                        val diffForCard = if (event.toolName in setOf("edit_file", "write_file", "delete_file")) {
-                            pendingDiffByPath.remove(event.detail).orEmpty()
+                        val cleanPath = event.detail.removePrefix("path=").substringBefore(":")
+                        val diffForCard = if (event.toolName in setOf("edit_file", "patch_lines", "write_file", "delete_file")) {
+                            pendingDiffByPath.remove(event.detail)
+                                ?: pendingDiffByPath.remove(cleanPath)
+                                .orEmpty()
                         } else emptyList()
 
-                        if (event.toolName in setOf("edit_file", "write_file", "delete_file") && event.success) {
+                        if (event.toolName in setOf("edit_file", "patch_lines", "write_file", "delete_file") && event.success) {
                             val changedCount = diffForCard.count {
                                 it.type == DiffLineType.ADDED || it.type == DiffLineType.REMOVED
                             }.coerceAtLeast(1)
@@ -250,13 +219,58 @@ class DevAgentEngine(
         }
     }
 
+    private fun buildHarnessSystemPrompt(
+        mode: AgentMode,
+        intent: ChatIntent,
+        repositoryName: String,
+        isWorkspaceEmpty: Boolean
+    ): String = buildString {
+        append(ChatIntentClassifier.instructionFor(intent)).append("\n\n")
+        append(
+            "Você é o DevAgent Studio, um sistema autônomo de engenharia de software de elite (arquitetura SWE-Agent / Claude Code). " +
+                "Seu foco absoluto é escrever código limpo, completo, modular, sem placeholders e pronto para produção.\n\n" +
+                "CATÁLOGO DE FERRAMENTAS DO HARNESS (JSON):\n" +
+                "Para acionar ferramentas, escreva 1 linha de raciocínio técnico (<thought>...</thought>) seguida do JSON da ferramenta:\n" +
+                "1. Buscar símbolo (classe/função/método): {\"tool\":\"find_symbol\",\"query\":\"NomeDoSimbolo\"}\n" +
+                "2. Buscar texto/regex (grep): {\"tool\":\"search_files\",\"query\":\"padrao\",\"path\":\".\"}\n" +
+                "3. Listar arquivos: {\"tool\":\"list_files\",\"path\":\".\"}\n" +
+                "4. Ler linhas numeradas (ideal para arquivos grandes): {\"tool\":\"read_file_lines\",\"path\":\"arq.kt\",\"start_line\":1,\"end_line\":140}\n" +
+                "5. Ler arquivo inteiro: {\"tool\":\"read_file\",\"path\":\"arq.kt\"}\n" +
+                "6. Edição cirúrgica por trecho (PREFERIDA): {\"tool\":\"edit_file\",\"path\":\"arq.kt\",\"old_text\":\"trecho atual\",\"new_text\":\"novo trecho\"}\n" +
+                "7. Edição cirúrgica por números de linha: {\"tool\":\"patch_lines\",\"path\":\"arq.kt\",\"start_line\":10,\"end_line\":20,\"new_text\":\"novo bloco\"}\n" +
+                "8. Criar arquivo novo ou reescrever: {\"tool\":\"write_file\",\"path\":\"arq.kt\",\"content\":\"código completo\"}\n" +
+                "9. Verificar sintaxe e balanço de chaves: {\"tool\":\"verify_syntax\",\"path\":\"arq.kt\"}\n" +
+                "10. Remover arquivo: {\"tool\":\"delete_file\",\"path\":\"arq.kt\"}\n" +
+                "11. Terminal sandbox (pwd, ls, cat, grep, find, head, tail, wc, tree): {\"tool\":\"run_command\",\"command\":\"tree\"}\n\n" +
+                "DISCIPLINA DE ENGENHARIA (HARNESS RULES):\n" +
+                "• NUNCA abrevie código com '// ... existing code' ou '// resto do código'. Todo código gravado deve ser 100% funcional e compilável.\n" +
+                "• CRIAÇÃO DO ZERO: Se o usuário pedir para criar um projeto/app do zero (ou o workspace estiver vazio), crie uma arquitetura limpa e completa usando write_file para cada arquivo essencial.\n" +
+                "• EVOLUÇÃO DE PROJETOS EXISTENTES: Consulte o RepoMap abaixo, use find_symbol / read_file_lines para inspecionar o código exato antes de editar, e aplique mudanças cirúrgicas com edit_file ou patch_lines.\n" +
+                "• AUTO-VERIFICAÇÃO (SyntaxGuard): Após cada edição, o Harness valida automaticamente chaves {}, parênteses () e sintaxe. Se aparecer [⚠️ HARNESS SYNTAX ERROR], corrija o arquivo imediatamente antes de encerrar.\n"
+        )
+        when (mode) {
+            AgentMode.ASK -> append("Modo ativo: ASK (somente leitura/análise; responda com explicações técnicas e blocos de código claros).")
+            AgentMode.IMAGINE -> append("Modo ativo: PLAN (projete a arquitetura, contratos de dados e passos de implementação; somente leitura).")
+            AgentMode.BUILD -> append("Modo ativo: BUILD (autonomia total para criar projetos do zero, editar múltiplos arquivos e validar sintaxe).")
+        }
+        if (repositoryName.isNotBlank()) {
+            append(" Projeto ativo: $repositoryName.")
+        } else if (isWorkspaceEmpty) {
+            append(" Workspace pronto para criação de projeto do zero.")
+        }
+    }
+
     private fun mapToolType(name: String): ToolType = when (name) {
         "list_files" -> ToolType.LIST_FILES
         "read_file" -> ToolType.READ_FILE
+        "read_file_lines" -> ToolType.READ_FILE_LINES
         "search_files" -> ToolType.SEARCH_FILES
+        "find_symbol" -> ToolType.FIND_SYMBOL
         "edit_file" -> ToolType.EDIT_FILE
+        "patch_lines" -> ToolType.PATCH_LINES
         "write_file" -> ToolType.WRITE_FILE
         "delete_file" -> ToolType.DELETE_FILE
+        "verify_syntax" -> ToolType.VERIFY_SYNTAX
         "run_command" -> ToolType.RUN_COMMAND
         else -> ToolType.READ_FILE
     }
@@ -271,7 +285,7 @@ class DevAgentEngine(
         for (msg in recent) {
             val speaker = if (msg.role == MessageRole.USER) "USUÁRIO" else "DEVAGENT"
             val toolsSummary = if (msg.toolCalls.isNotEmpty()) {
-                " [ferramentas usadas: " + msg.toolCalls.joinToString(", ") { "${it.type.displayName}(${it.detail})" } + "]"
+                " [tools: " + msg.toolCalls.joinToString(", ") { "${it.type.displayName}(${it.detail})" } + "]"
             } else ""
             sb.append(speaker).append(toolsSummary).append(": ")
                 .append(msg.text.take(1_500)).append("\n")
@@ -280,17 +294,16 @@ class DevAgentEngine(
     }
 
     private fun buildRepositoryContext(files: List<RepoFile>): String {
-        if (files.isEmpty()) return ""
-        val maxContextChars = 45_000
-        val maxPerFileChars = 6_000
-        val output = StringBuilder()
-        output.append("ÁRVORE DE ARQUIVOS DO WORKSPACE (${files.size} arquivos):\n")
-        files.forEach { f ->
-            val modTag = if (f.isModified) " [MODIFICADO]" else ""
-            output.append("- ${f.path} (${f.content.lines().size} linhas)$modTag\n")
+        if (files.isEmpty()) {
+            return "STATUS DO WORKSPACE: Vazio (0 arquivos). Se o usuário pedir para criar um projeto ou app do zero, use write_file para criar a estrutura completa de arquivos."
         }
-        output.append("\nAMOSTRA DE ARQUIVOS PRINCIPAIS (use read_file para ler qualquer arquivo completo):\n")
-        for (file in files.take(15)) {
+        val maxContextChars = 48_000
+        val maxPerFileChars = 5_000
+        val output = StringBuilder()
+        output.append(RepoSymbolIndexer.buildRepoMap(files, maxChars = 20_000))
+        output.append("\nCONTEÚDO DOS ARQUIVOS-CHAVE (use read_file / read_file_lines para ver qualquer arquivo completo):\n")
+        val prioritized = files.sortedByDescending { it.isModified }.take(10)
+        for (file in prioritized) {
             if (output.length >= maxContextChars) break
             val remaining = maxContextChars - output.length
             val content = file.content.take(minOf(maxPerFileChars, remaining))
@@ -307,7 +320,6 @@ class DevAgentEngine(
             val newLines = if (newContent.isEmpty()) emptyList() else newContent.replace("\r\n", "\n").lines()
             if (oldLines == newLines) return emptyList()
 
-            // Find common prefix and suffix to focus on changed region + context
             var prefix = 0
             while (prefix < oldLines.size && prefix < newLines.size && oldLines[prefix] == newLines[prefix]) {
                 prefix++
@@ -346,9 +358,6 @@ class DevAgentEngine(
         }
     }
 
-    /**
-     * Copies repository files into the app-owned workspace and reports partial failures.
-     */
     fun syncRepositoryToWorkspace(files: List<RepoFile>): WorkspaceSyncResult {
         val root = workspaceRoot.canonicalFile
         if (!root.exists() && !root.mkdirs()) {
@@ -366,7 +375,6 @@ class DevAgentEngine(
             )
         }
 
-        // Clear stale files from previous repositories before syncing
         root.listFiles()?.forEach { child ->
             runCatching { child.deleteRecursively() }
         }

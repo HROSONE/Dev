@@ -10,7 +10,7 @@ import java.util.zip.ZipInputStream
 
 /**
  * Permite:
- * 1) Criar projetos/repositórios inteiros do zero diretamente dentro do DevAgent
+ * 1) Criar projetos/repositórios inteiros do zero diretamente dentro do DevAgent com arquitetura limpa
  * 2) Importar arquivos individuais ou pacotes .zip diretamente da memória do celular
  */
 object LocalProjectCreator {
@@ -31,30 +31,41 @@ object LocalProjectCreator {
         val pkgSlug = cleanName.lowercase().filter { it.isLetterOrDigit() }.ifBlank { "meuapp" }
         val files = when (template) {
             ProjectTemplate.BLANK -> mapOf(
-                "README.md" to "# $cleanName\n\nProjeto criado localmente no **DevAgent**.\n",
-                ".gitignore" to ".DS_Store\n*.log\n.env\nbuild/\ndist/\n"
+                "README.md" to "# $cleanName\n\nProjeto criado localmente no **DevAgent Studio**.\n\nPeça ao agente no modo **Construir (⚡ Auto)** para arquitetar e gerar todos os módulos deste projeto do zero.\n",
+                ".gitignore" to ".DS_Store\n*.log\n.env\nbuild/\ndist/\nnode_modules/\n__pycache__/\n"
             )
             ProjectTemplate.ANDROID_COMPOSE -> mapOf(
-                "README.md" to "# $cleanName\n\nApp Android (Kotlin + Jetpack Compose) criado no **DevAgent**.\n",
+                "README.md" to "# $cleanName\n\nApp Android moderno (Kotlin + Jetpack Compose + Material 3) criado no **DevAgent Studio**.\n",
                 ".gitignore" to ".gradle/\nbuild/\nlocal.properties\n*.iml\n.env\n",
                 "settings.gradle.kts" to "rootProject.name = \"$cleanName\"\ninclude(\":app\")\n",
                 "build.gradle.kts" to "plugins {\n    id(\"com.android.application\") version \"8.7.0\" apply false\n    id(\"org.jetbrains.kotlin.android\") version \"2.0.20\" apply false\n}\n",
                 "app/build.gradle.kts" to "plugins {\n    id(\"com.android.application\")\n    id(\"org.jetbrains.kotlin.android\")\n}\n\nandroid {\n    namespace = \"com.example.$pkgSlug\"\n    compileSdk = 35\n\n    defaultConfig {\n        applicationId = \"com.example.$pkgSlug\"\n        minSdk = 24\n        targetSdk = 35\n        versionCode = 1\n        versionName = \"1.0.0\"\n    }\n    buildFeatures {\n        compose = true\n    }\n}\n",
                 "app/src/main/AndroidManifest.xml" to "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\">\n    <application android:label=\"$cleanName\" android:supportsRtl=\"true\">\n        <activity android:name=\".MainActivity\" android:exported=\"true\">\n            <intent-filter>\n                <action android:name=\"android.intent.action.MAIN\" />\n                <category android:name=\"android.intent.category.LAUNCHER\" />\n            </intent-filter>\n        </activity>\n    </application>\n</manifest>\n",
-                "app/src/main/java/com/example/$pkgSlug/MainActivity.kt" to "package com.example.$pkgSlug\n\nimport android.os.Bundle\nimport androidx.activity.ComponentActivity\nimport androidx.activity.compose.setContent\nimport androidx.compose.foundation.layout.*\nimport androidx.compose.material3.*\nimport androidx.compose.ui.Alignment\nimport androidx.compose.ui.Modifier\n\nclass MainActivity : ComponentActivity() {\n    override fun onCreate(savedInstanceState: Bundle?) {\n        super.onCreate(savedInstanceState)\n        setContent {\n            MaterialTheme {\n                Surface(modifier = Modifier.fillMaxSize()) {\n                    Box(contentAlignment = Alignment.Center) {\n                        Text(text = \"Olá do $cleanName!\")\n                    }\n                }\n            }\n        }\n    }\n}\n"
+                "app/src/main/java/com/example/$pkgSlug/model/AppItem.kt" to "package com.example.$pkgSlug.model\n\ndata class AppItem(\n    val id: String,\n    val title: String,\n    val done: Boolean = false\n)\n",
+                "app/src/main/java/com/example/$pkgSlug/MainActivity.kt" to "package com.example.$pkgSlug\n\nimport android.os.Bundle\nimport androidx.activity.ComponentActivity\nimport androidx.activity.compose.setContent\nimport androidx.compose.foundation.layout.*\nimport androidx.compose.material3.*\nimport androidx.compose.runtime.*\nimport androidx.compose.ui.Alignment\nimport androidx.compose.ui.Modifier\nimport androidx.compose.ui.unit.dp\nimport com.example.$pkgSlug.model.AppItem\n\nclass MainActivity : ComponentActivity() {\n    override fun onCreate(savedInstanceState: Bundle?) {\n        super.onCreate(savedInstanceState)\n        setContent {\n            MaterialTheme {\n                Surface(modifier = Modifier.fillMaxSize()) {\n                    MainScreen(appTitle = \"$cleanName\")\n                }\n            }\n        }\n    }\n}\n\n@Composable\nfun MainScreen(appTitle: String) {\n    var items by remember {\n        mutableStateOf(listOf(AppItem(\"1\", \"Primeiro módulo pronto\", true)))\n    }\n    Column(\n        modifier = Modifier.fillMaxSize().padding(24.dp),\n        verticalArrangement = Arrangement.Center,\n        horizontalAlignment = Alignment.CenterHorizontally\n    ) {\n        Text(text = appTitle, style = MaterialTheme.typography.headlineMedium)\n        Spacer(modifier = Modifier.height(8.dp))\n        Text(text = \"Itens ativos: \${items.size}\", style = MaterialTheme.typography.bodyMedium)\n    }\n}\n"
+            )
+            ProjectTemplate.NODE_TS_API -> mapOf(
+                "README.md" to "# $cleanName\n\nServiço Node.js + TypeScript modular criado no **DevAgent Studio**.\n\n```bash\nnpm install\nnpm run dev\n```\n",
+                ".gitignore" to "node_modules/\ndist/\n.env\n*.log\n",
+                "package.json" to "{\n  \"name\": \"$pkgSlug\",\n  \"version\": \"1.0.0\",\n  \"private\": true,\n  \"scripts\": {\n    \"dev\": \"tsx watch src/index.ts\",\n    \"build\": \"tsc\",\n    \"start\": \"node dist/index.js\"\n  },\n  \"dependencies\": {},\n  \"devDependencies\": {\n    \"typescript\": \"^5.6.0\",\n    \"tsx\": \"^4.19.0\"\n  }\n}\n",
+                "tsconfig.json" to "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"NodeNext\",\n    \"moduleResolution\": \"NodeNext\",\n    \"outDir\": \"dist\",\n    \"rootDir\": \"src\",\n    \"strict\": true,\n    \"esModuleInterop\": true\n  },\n  \"include\": [\"src/**/*\"]\n}\n",
+                "src/types.ts" to "export interface HealthStatus {\n  service: string;\n  status: 'ok' | 'degraded';\n  timestamp: string;\n}\n",
+                "src/index.ts" to "import { HealthStatus } from './types.js';\n\nexport function getHealth(): HealthStatus {\n  return {\n    service: '$cleanName',\n    status: 'ok',\n    timestamp: new Date().toISOString(),\n  };\n}\n\nconsole.log('Serviço iniciado:', getHealth());\n"
             )
             ProjectTemplate.PYTHON_APP -> mapOf(
-                "README.md" to "# $cleanName\n\nProjeto Python criado no **DevAgent**.\n\n```bash\npython main.py\n```\n",
+                "README.md" to "# $cleanName\n\nProjeto Python modular criado no **DevAgent Studio**.\n\n```bash\npython main.py\n```\n",
                 ".gitignore" to "__pycache__/\n.venv/\n*.pyc\n.env\n",
                 "requirements.txt" to "requests>=2.31.0\n",
-                "main.py" to "def main():\n    print(\"Projeto $cleanName iniciado com sucesso!\")\n\nif __name__ == \"__main__\":\n    main()\n"
+                "src/__init__.py" to "",
+                "src/core.py" to "from dataclasses import dataclass\n\n\n@dataclass\nclass AppConfig:\n    name: str = \"$cleanName\"\n    version: str = \"1.0.0\"\n\n\ndef run_pipeline(config: AppConfig) -> str:\n    return f\"{config.name} v{config.version} pronto para execução!\"\n",
+                "main.py" to "from src.core import AppConfig, run_pipeline\n\n\ndef main() -> None:\n    config = AppConfig()\n    print(run_pipeline(config))\n\n\nif __name__ == \"__main__\":\n    main()\n"
             )
             ProjectTemplate.WEB_APP -> mapOf(
-                "README.md" to "# $cleanName\n\nWeb App interativo criado no **DevAgent**.\n",
+                "README.md" to "# $cleanName\n\nWeb App moderno e responsivo criado no **DevAgent Studio**.\n",
                 ".gitignore" to "node_modules/\ndist/\n.DS_Store\n",
-                "index.html" to "<!DOCTYPE html>\n<html lang=\"pt-BR\">\n<head>\n  <meta charset=\"UTF-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <title>$cleanName</title>\n  <link rel=\"stylesheet\" href=\"styles.css\" />\n</head>\n<body>\n  <main class=\"container\">\n    <h1>$cleanName</h1>\n    <p id=\"status\">Pronto para editar com o DevAgent.</p>\n    <button id=\"actionBtn\">Testar Ação</button>\n  </main>\n  <script src=\"app.js\"></script>\n</body>\n</html>\n",
-                "styles.css" to "body { margin: 0; font-family: system-ui, sans-serif; background: #0d1117; color: #f0f6fc; display: flex; min-height: 100vh; align-items: center; justify-content: center; }\n.container { background: #161b22; padding: 2rem; border-radius: 12px; border: 1px solid #30363d; text-align: center; }\nbutton { background: #38bdf8; color: #090d12; border: none; padding: 0.6rem 1.2rem; border-radius: 8px; font-weight: 600; cursor: pointer; }\n",
-                "app.js" to "document.getElementById(\"actionBtn\")?.addEventListener(\"click\", () => {\n  const status = document.getElementById(\"status\");\n  if (status) status.textContent = \"Botão acionado com sucesso!\";\n});\n"
+                "index.html" to "<!DOCTYPE html>\n<html lang=\"pt-BR\">\n<head>\n  <meta charset=\"UTF-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <title>$cleanName</title>\n  <link rel=\"stylesheet\" href=\"styles.css\" />\n</head>\n<body>\n  <main class=\"container\">\n    <span class=\"badge\">DevAgent Studio</span>\n    <h1>$cleanName</h1>\n    <p id=\"status\">Pronto para evoluir com geração autônoma de código.</p>\n    <div class=\"actions\">\n      <button id=\"actionBtn\">Executar Ação</button>\n    </div>\n  </main>\n  <script src=\"app.js\"></script>\n</body>\n</html>\n",
+                "styles.css" to ":root { --bg: #0d1117; --card: #161b22; --border: #30363d; --accent: #38bdf8; --text: #f0f6fc; --muted: #8b949e; }\n* { box-sizing: border-box; }\nbody { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); display: flex; min-height: 100vh; align-items: center; justify-content: center; padding: 1.5rem; }\n.container { background: var(--card); padding: 2.25rem; border-radius: 16px; border: 1px solid var(--border); max-width: 480px; width: 100%; text-align: center; box-shadow: 0 16px 40px rgba(0,0,0,0.35); }\n.badge { display: inline-block; padding: 0.25rem 0.7rem; border-radius: 999px; background: rgba(56,189,248,0.15); color: var(--accent); font-size: 0.75rem; font-weight: 600; margin-bottom: 0.75rem; }\np { color: var(--muted); line-height: 1.5; }\nbutton { background: var(--accent); color: #090d12; border: none; padding: 0.7rem 1.4rem; border-radius: 10px; font-weight: 700; cursor: pointer; transition: transform 0.15s ease; }\nbutton:active { transform: scale(0.97); }\n",
+                "app.js" to "const state = { clicks: 0 };\n\ndocument.getElementById('actionBtn')?.addEventListener('click', () => {\n  state.clicks += 1;\n  const status = document.getElementById('status');\n  if (status) {\n    status.textContent = `Ação executada (${state.clicks}x) com sucesso!`;\n  }\n});\n"
             )
         }
 

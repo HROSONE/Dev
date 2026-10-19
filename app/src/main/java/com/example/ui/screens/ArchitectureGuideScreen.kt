@@ -29,8 +29,8 @@ fun ArchitectureGuideScreen(modifier: Modifier = Modifier) {
     var copiedNotice by remember { mutableStateOf<String?>(null) }
 
     val tabs = listOf(
-        "1. O que é real",
-        "2. Agent Loop",
+        "1. SWE-Harness",
+        "2. Agent Loop 2.0",
         "3. Segurança",
         "4. Limites"
     )
@@ -56,13 +56,13 @@ fun ArchitectureGuideScreen(modifier: Modifier = Modifier) {
             Spacer(modifier = Modifier.width(8.dp))
             Column {
                 Text(
-                    text = "Arquitetura real do DevAgent",
+                    text = "Arquitetura SWE-Agent Harness do DevAgent",
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
                     color = TextPrimary
                 )
                 Text(
-                    text = "Android · Kotlin · Agente Autônomo Estilo Claude Code",
+                    text = "RepoMap · SyntaxGuard · Batch Tools · Edição Cirúrgica Tolerante",
                     fontSize = 11.sp,
                     color = TextSecondary
                 )
@@ -124,31 +124,31 @@ fun ArchitectureGuideScreen(modifier: Modifier = Modifier) {
 }
 
 private val REAL_STACK = """
-# Stack implementada (Agente Autônomo Estilo Claude Code)
+# SWE-Agent Harness 2.0 (Foco Máximo em Geração de Código)
 
-• App Android nativo (Kotlin + Jetpack Compose)
-• Modelos: Gemini 3.8 Flash + OpenRouter (Claude, DeepSeek, Qwen, etc.)
-• GitHub REST + Git Data API: leitura de até 120 arquivos + commit atômico multi-arquivo
-• Workspace local editável em filesDir/devagent-workspace + Editor de Código integrado
-• Tools: list_files, search_files, read_file, edit_file (cirúrgico), write_file, delete_file, run_command
-• Comandos do terminal: pwd, ls, cat, grep, find, head, tail, wc, tree
-
-Camadas:
-  UI (Compose) → ViewModel → DevAgentEngine → AgentToolLoop (até 18 passos)
-       → AgentToolCoordinator → WorkspaceFileTools / WorkspaceCommandRunner
-       → LlmGateway (Gemini / OpenRouter) / GitHubRepositoryClient
+• RepoSymbolIndexer (RepoMap Automático):
+  Indexa classes, interfaces, objetos, funções e rotas com número de linha em Kotlin, Java, Python, TS/JS, Go e Rust e injeta o mapa estrutural diretamente no prompt do sistema.
+• 11 Ferramentas de Engenharia de Precisão:
+  - find_symbol: localiza declarações de classes/funções com linha exata
+  - read_file_lines: lê janelas de código numeradas ("  42 | codigo") economizando contexto
+  - edit_file: substituição cirúrgica tolerante a diferenças de indentação e CRLF
+  - patch_lines: substitui intervalos exatos de linhas [start_line..end_line]
+  - verify_syntax: validador estático SyntaxGuard (chaves/parênteses/strings/JSON e bloqueio de placeholders)
+  - search_files, list_files, read_file, write_file, delete_file, run_command
+• Modelos Suportados:
+  - Gemini 3.8 Flash, Qwen 2.5 Coder (Motor Nativo GGUF llama-server + Fallback Cloud) e OpenRouter.
 """.trimIndent()
 
 private val AGENT_LOOP = """
-# Ciclo autônomo do agente (Claude Code Style)
+# Ciclo Autônomo 2.0 (24 Passos + Batch Execution + SyntaxGuard)
 
-1. Mantém histórico multi-turn e índice completo da árvore de arquivos do workspace
-2. Extrai raciocínio + JSON de ferramenta (mesmo dentro de blocos ```json ou após explicação)
-3. Pesquisa com search_files / lê com read_file e aplica mudanças cirúrgicas com edit_file
-4. Modo ⚡ Auto (padrão em Construir): executa edições encadeadas autonomamente e anexa o diff colorido em cada card
-5. Modo 🔒 Diff: abre diálogo de aprovação humana antes de cada gravação
-6. Auto-recuperação: se um caminho ou old_text falhar, devolve o erro ao modelo para ele corrigir e continuar
-7. Aba Commit envia todos os arquivos alterados em um único commit Git atômico (Git Trees API)
+1. Protocolo THINK → LOCATE → ACT → VERIFY para espremer o máximo do LLM.
+2. Execução Multi-Tool em Lote (Batch):
+   O modelo pode emitir até 4 ferramentas num único turno (ex.: ler vários arquivos ou criar múltiplos módulos de um projeto do zero).
+3. Auto-Verificação Pós-Mutação (SyntaxGuard):
+   Toda chamada de edit_file, patch_lines ou write_file roda automaticamente o SyntaxVerifier. Se houver chave desbalanceada ou placeholder proibido ("// ... existing code"), o erro exato e a linha são devolvidos ao modelo no mesmo turno para autocorreção imediata.
+4. Compactação de Janela Deslizante (Context Compaction):
+   Preserva os passos recentes completos e resume leituras antigas para nunca estourar a janela de tokens em refatorações longas.
 """.trimIndent()
 
 private val SECURITY = """

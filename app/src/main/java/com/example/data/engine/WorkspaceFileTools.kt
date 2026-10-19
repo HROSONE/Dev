@@ -5,10 +5,14 @@ import java.io.File
 import java.io.IOException
 
 /**
- * File tools for an explicitly supplied, app-owned workspace directory.
+ * Ferramentas de arquivo do Harness SWE-Agent para o diretório de trabalho isolado.
  *
- * Supports listing, reading, searching (grep), surgical search-and-replace editing
- * (Claude Code style), full file writes, and file deletion within the canonical workspace root.
+ * Inclui:
+ * - list_files, read_file, read_file_lines (leitura paginada com números de linha)
+ * - search_files (grep regex/texto), find_symbol (indexador de definições e referências)
+ * - edit_file (busca e substituição cirúrgica com fallback tolerante a indentação)
+ * - patch_lines (edição cirúrgica por intervalo de linhas start_line..end_line)
+ * - write_file, delete_file e verify_syntax (validação estática de delimitadores e truncamento)
  */
 class WorkspaceFileTools(
     workspaceRoot: File,
@@ -55,9 +59,36 @@ class WorkspaceFileTools(
     ) {
         val file = resolve(relativePath)
         if (!file.exists() || !file.isFile) {
-            throw IOException("O arquivo solicitado não existe: $relativePath. Use list_files ou search_files para localizar o caminho correto.")
+            throw IOException("O arquivo solicitado não existe: $relativePath. Use list_files ou find_symbol para localizar o caminho correto.")
         }
         file.readText(Charsets.UTF_8)
+    }
+
+    fun readFileLines(
+        relativePath: String,
+        startLine: Int,
+        endLine: Int,
+        mode: AgentMode,
+        intent: ChatIntent
+    ): ToolDispatchResult<String> = dispatcher.dispatch(
+        mode = mode,
+        intent = intent,
+        risk = ToolRisk.READ_ONLY
+    ) {
+        val file = resolve(relativePath)
+        if (!file.exists() || !file.isFile) {
+            throw IOException("O arquivo solicitado não existe: $relativePath.")
+        }
+        val lines = file.readText(Charsets.UTF_8).replace("\r\n", "\n").lines()
+        if (lines.isEmpty()) return@dispatch "(Arquivo vazio: $relativePath)"
+        val safeStart = startLine.coerceIn(1, lines.size)
+        val safeEnd = endLine.coerceIn(safeStart, lines.size)
+        val width = safeEnd.toString().length.coerceAtLeast(3)
+        val slice = (safeStart..safeEnd).joinToString("\n") { lineNum ->
+            val numStr = lineNum.toString().padStart(width, ' ')
+            "$numStr | ${lines[lineNum - 1]}"
+        }
+        "Arquivo: $relativePath (linhas $safeStart..$safeEnd de ${lines.size})\n$slice"
     }
 
     fun searchFiles(
@@ -113,10 +144,43 @@ class WorkspaceFileTools(
         }
     }
 
-    /**
-     * Computes the resulting content of an edit_file operation without modifying disk yet.
-     * Used to generate accurate diff previews before confirmation.
-     */
+    fun findSymbol(
+        query: String,
+        mode: AgentMode,
+        intent: ChatIntent
+    ): ToolDispatchResult<String> = dispatcher.dispatch(
+        mode = mode,
+        intent = intent,
+        risk = ToolRisk.READ_ONLY
+    ) {
+        RepoSymbolIndexer.findSymbolsInDirectory(root, query)
+    }
+
+    fun verifySyntax(
+        relativePath: String,
+        mode: AgentMode,
+        intent: ChatIntent
+    ): ToolDispatchResult<String> = dispatcher.dispatch(
+        mode = mode,
+        intent = intent,
+        risk = ToolRisk.READ_ONLY
+    ) {
+        val file = resolve(relativePath)
+        if (!file.exists() || !file.isFile) {
+            throw IOException("O arquivo solicitado para verificação não existe: $relativePath")
+        }
+        val check = SyntaxVerifier.verify(relativePath, file.readText(Charsets.UTF_8))
+        check.summary
+    }
+
+    fun verifySyntaxDirect(relativePath: String): SyntaxCheckResult? {
+        return runCatching {
+            val file = resolve(relativePath)
+            if (!file.isFile) return null
+            SyntaxVerifier.verify(relativePath, file.readText(Charsets.UTF_8))
+        }.getOrNull()
+    }
+
     fun previewEditFile(
         relativePath: String,
         oldText: String,
@@ -131,9 +195,6 @@ class WorkspaceFileTools(
         return applySurgicalEdit(current, relativePath, oldText, newText, replaceAll)
     }
 
-    /**
-     * Surgical search-and-replace inside an existing file (Claude Code style).
-     */
     fun editFile(
         relativePath: String,
         oldText: String,
@@ -158,6 +219,63 @@ class WorkspaceFileTools(
         "Arquivo editado: ${file.relativeTo(root).invariantSeparatorsPath}"
     }
 
+    fun previewPatchLines(
+        relativePath: String,
+        startLine: Int,
+        endLine: Int,
+        newText: String
+    ): String {
+        val file = resolve(relativePath)
+        if (!file.exists() || !file.isFile) {
+            throw IOException("O arquivo solicitado para patch_lines não existe: $relativePath")
+        }
+        val current = file.readText(Charsets.UTF_8)
+        return applyLinePatch(current, relativePath, startLine, endLine, newText)
+    }
+
+    fun patchLines(
+        relativePath: String,
+        startLine: Int,
+        endLine: Int,
+        newText: String,
+        mode: AgentMode,
+        intent: ChatIntent,
+        userConfirmedMutation: Boolean
+    ): ToolDispatchResult<String> = dispatcher.dispatch(
+        mode = mode,
+        intent = intent,
+        risk = ToolRisk.MUTATING,
+        userConfirmedMutation = userConfirmedMutation
+    ) {
+        val file = resolve(relativePath)
+        if (!file.exists() || !file.isFile) {
+            throw IOException("O arquivo solicitado para patch_lines não existe: $relativePath")
+        }
+        val current = file.readText(Charsets.UTF_8)
+        val updated = applyLinePatch(current, relativePath, startLine, endLine, newText)
+        file.writeText(updated, Charsets.UTF_8)
+        "Linhas $startLine..$endLine atualizadas em: ${file.relativeTo(root).invariantSeparatorsPath}"
+    }
+
+    private fun applyLinePatch(
+        current: String,
+        relativePath: String,
+        startLine: Int,
+        endLine: Int,
+        newText: String
+    ): String {
+        val lines = current.replace("\r\n", "\n").lines().toMutableList()
+        if (startLine < 1 || startLine > lines.size + 1 || endLine < startLine) {
+            throw IOException("Intervalo de linhas inválido ($startLine..$endLine) para $relativePath (${lines.size} linhas).")
+        }
+        val safeStartIdx = (startLine - 1).coerceIn(0, lines.size)
+        val safeEndIdx = endLine.coerceIn(safeStartIdx, lines.size)
+        val replacementLines = if (newText.isEmpty()) emptyList() else newText.replace("\r\n", "\n").lines()
+        val prefix = lines.subList(0, safeStartIdx)
+        val suffix = lines.subList(safeEndIdx, lines.size)
+        return (prefix + replacementLines + suffix).joinToString("\n")
+    }
+
     private fun applySurgicalEdit(
         current: String,
         relativePath: String,
@@ -173,27 +291,70 @@ class WorkspaceFileTools(
             throw IOException("O parâmetro old_text não pode ser vazio.")
         }
         val firstIndex = normalizedCurrent.indexOf(normalizedOld)
-        if (firstIndex < 0) {
-            throw IOException(
-                "Trecho old_text não encontrado em $relativePath. Use read_file para conferir o conteúdo exato antes de chamar edit_file."
-            )
-        }
-        if (!replaceAll) {
-            val secondIndex = normalizedCurrent.indexOf(normalizedOld, startIndex = firstIndex + normalizedOld.length)
-            if (secondIndex >= 0) {
-                throw IOException(
-                    "Trecho old_text aparece mais de uma vez em $relativePath. Inclua mais linhas de contexto em old_text ou defina replace_all=true."
-                )
+        if (firstIndex >= 0) {
+            if (!replaceAll) {
+                val secondIndex = normalizedCurrent.indexOf(normalizedOld, startIndex = firstIndex + normalizedOld.length)
+                if (secondIndex >= 0) {
+                    throw IOException(
+                        "Trecho old_text aparece mais de uma vez em $relativePath. Inclua mais linhas de contexto em old_text ou defina replace_all=true."
+                    )
+                }
+                return normalizedCurrent.replaceFirst(normalizedOld, normalizedNew)
             }
-            return normalizedCurrent.replaceFirst(normalizedOld, normalizedNew)
+            return normalizedCurrent.replace(normalizedOld, normalizedNew)
         }
-        return normalizedCurrent.replace(normalizedOld, normalizedNew)
+
+        // Fallback inteligente do Harness: matching tolerante a diferenças de indentação/espaços nas pontas
+        val fuzzyResult = tryIndentationTolerantReplace(normalizedCurrent, normalizedOld, normalizedNew)
+        if (fuzzyResult != null) return fuzzyResult
+
+        throw IOException(
+            "Trecho old_text não encontrado em $relativePath. Use read_file_lines ou read_file para conferir o conteúdo exato (ou use patch_lines com start_line/end_line)."
+        )
     }
 
-    /**
-     * Writes only after the existing policy confirms a concrete BUILD implementation
-     * request and the caller passes a separate confirmation signal.
-     */
+    private fun tryIndentationTolerantReplace(
+        current: String,
+        oldText: String,
+        newText: String
+    ): String? {
+        val currentLines = current.lines()
+        val oldLines = oldText.trim().lines().map { it.trim() }.filter { it.isNotEmpty() }
+        if (oldLines.isEmpty() || oldLines.size > currentLines.size) return null
+
+        var matchStart = -1
+        var matchEnd = -1
+        var matchCount = 0
+
+        for (i in currentLines.indices) {
+            if (currentLines[i].trim() == oldLines.first()) {
+                var curIdx = i
+                var oldIdx = 0
+                while (curIdx < currentLines.size && oldIdx < oldLines.size) {
+                    val cTrim = currentLines[curIdx].trim()
+                    if (cTrim.isEmpty()) {
+                        curIdx++
+                        continue
+                    }
+                    if (cTrim != oldLines[oldIdx]) break
+                    oldIdx++
+                    curIdx++
+                }
+                if (oldIdx == oldLines.size) {
+                    matchStart = i
+                    matchEnd = curIdx
+                    matchCount++
+                }
+            }
+        }
+
+        if (matchCount != 1 || matchStart < 0) return null
+        val before = currentLines.subList(0, matchStart)
+        val after = currentLines.subList(matchEnd, currentLines.size)
+        val newLines = newText.lines()
+        return (before + newLines + after).joinToString("\n")
+    }
+
     fun writeFile(
         relativePath: String,
         content: String,

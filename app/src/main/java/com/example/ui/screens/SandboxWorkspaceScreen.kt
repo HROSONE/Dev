@@ -28,6 +28,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.engine.SyntaxVerifier
 import com.example.data.model.RepoFile
 import com.example.ui.components.TerminalConsoleBox
 import com.example.ui.theme.*
@@ -57,6 +58,8 @@ fun SandboxWorkspaceScreen(
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
     var terminalInput by remember { mutableStateOf("") }
+    var fileFilterQuery by remember { mutableStateOf("") }
+    var showLineNumbers by remember { mutableStateOf(true) }
     var isEditing by remember(selectedFile?.path) { mutableStateOf(false) }
     var editorContent by remember(selectedFile?.path, selectedFile?.content) {
         mutableStateOf(selectedFile?.content.orEmpty())
@@ -71,6 +74,11 @@ fun SandboxWorkspaceScreen(
     var newGhRepoDesc by remember { mutableStateOf("Projeto criado no DevAgent Android") }
     var newGhRepoPrivate by remember { mutableStateOf(false) }
     var newGhTokenInput by remember { mutableStateOf("") }
+
+    val filteredFiles = remember(files, fileFilterQuery) {
+        val q = fileFilterQuery.trim().lowercase()
+        if (q.isEmpty()) files else files.filter { it.path.lowercase().contains(q) }
+    }
 
     if (showNewFileDialog) {
         AlertDialog(
@@ -133,7 +141,7 @@ fun SandboxWorkspaceScreen(
                 Spacer(modifier = Modifier.width(8.dp))
                 Column {
                     Text(
-                        text = "Workspace & Editor Local",
+                        text = "IDE Workspace & SyntaxGuard",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         color = TextPrimary
@@ -220,47 +228,65 @@ fun SandboxWorkspaceScreen(
         when (selectedTab) {
             0 -> {
                 Row(modifier = Modifier.fillMaxSize()) {
-                    LazyColumn(
+                    Column(
                         modifier = Modifier
                             .weight(0.38f)
                             .fillMaxHeight()
                             .background(DarkSurfaceVariant)
                             .border(width = 0.5.dp, color = DarkBorder)
                     ) {
-                        items(files) { file ->
-                            val isSelected = file.path == selectedFile?.path
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { onSelectFile(file) }
-                                    .background(if (isSelected) DarkSurfaceHover else Color.Transparent)
-                                    .padding(horizontal = 8.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = if (file.isModified) Icons.Default.EditNote else Icons.AutoMirrored.Filled.InsertDriveFile,
-                                    contentDescription = null,
-                                    tint = if (file.isModified) AccentYellow else TextSecondary,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Column {
-                                    Text(
-                                        text = file.path.substringAfterLast('/'),
-                                        fontSize = 11.sp,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (isSelected) AccentCyan else TextPrimary,
-                                        maxLines = 1
+                        OutlinedTextField(
+                            value = fileFilterQuery,
+                            onValueChange = { fileFilterQuery = it },
+                            placeholder = { Text("Filtrar arquivo…", fontSize = 10.sp, color = TextMuted) },
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(6.dp),
+                            textStyle = TextStyle(fontSize = 11.sp, color = TextPrimary),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = DarkSurface,
+                                unfocusedContainerColor = DarkSurface,
+                                focusedBorderColor = AccentCyan,
+                                unfocusedBorderColor = DarkBorder
+                            )
+                        )
+                        LazyColumn(modifier = Modifier.fillMaxSize()) {
+                            items(filteredFiles) { file ->
+                                val isSelected = file.path == selectedFile?.path
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { onSelectFile(file) }
+                                        .background(if (isSelected) DarkSurfaceHover else Color.Transparent)
+                                        .padding(horizontal = 8.dp, vertical = 9.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = if (file.isModified) Icons.Default.EditNote else Icons.AutoMirrored.Filled.InsertDriveFile,
+                                        contentDescription = null,
+                                        tint = if (file.isModified) AccentYellow else TextSecondary,
+                                        modifier = Modifier.size(14.dp)
                                     )
-                                    Text(
-                                        text = file.path.substringBeforeLast('/', ""),
-                                        fontSize = 9.sp,
-                                        color = TextMuted,
-                                        maxLines = 1
-                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Column {
+                                        Text(
+                                            text = file.path.substringAfterLast('/'),
+                                            fontSize = 11.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (isSelected) AccentCyan else TextPrimary,
+                                            maxLines = 1
+                                        )
+                                        Text(
+                                            text = file.path.substringBeforeLast('/', ""),
+                                            fontSize = 9.sp,
+                                            color = TextMuted,
+                                            maxLines = 1
+                                        )
+                                    }
                                 }
+                                HorizontalDivider(color = DarkBorder.copy(alpha = 0.4f), thickness = 0.5.dp)
                             }
-                            HorizontalDivider(color = DarkBorder.copy(alpha = 0.4f), thickness = 0.5.dp)
                         }
                     }
 
@@ -272,6 +298,14 @@ fun SandboxWorkspaceScreen(
                             .padding(8.dp)
                     ) {
                         if (selectedFile != null) {
+                            val activeSource = if (isEditing) editorContent else selectedFile.content
+                            val syntaxReport = remember(selectedFile.path, activeSource) {
+                                SyntaxVerifier.verify(selectedFile.path, activeSource)
+                            }
+                            val lineCount = remember(activeSource) {
+                                if (activeSource.isEmpty()) 0 else activeSource.lines().size
+                            }
+
                             Column(modifier = Modifier.fillMaxSize()) {
                                 Row(
                                     modifier = Modifier
@@ -288,16 +322,40 @@ fun SandboxWorkspaceScreen(
                                             color = AccentCyan,
                                             maxLines = 1
                                         )
-                                        if (selectedFile.isModified) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
                                             Text(
-                                                text = "MODIFICADO NO WORKSPACE",
+                                                text = if (syntaxReport.passed) "✓ Sintaxe OK ($lineCount linhas)" else "⚠️ ${syntaxReport.issues.firstOrNull()?.message ?: "Alerta de sintaxe"}",
                                                 fontSize = 9.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = AccentYellow
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = if (syntaxReport.passed) AccentGreen else AccentYellow,
+                                                maxLines = 1
                                             )
+                                            if (selectedFile.isModified) {
+                                                Text(
+                                                    text = "· MODIFICADO",
+                                                    fontSize = 9.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = AccentYellow
+                                                )
+                                            }
                                         }
                                     }
                                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        if (!isEditing) {
+                                            TextButton(
+                                                onClick = { showLineNumbers = !showLineNumbers },
+                                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                            ) {
+                                                Text(
+                                                    if (showLineNumbers) "# Linhas" else "Texto",
+                                                    fontSize = 10.sp,
+                                                    color = TextSecondary
+                                                )
+                                            }
+                                        }
                                         if (selectedFile.isModified && !isEditing && !isLocalOnlyProject) {
                                             TextButton(
                                                 onClick = { onRevertFile(selectedFile.path) },
@@ -361,13 +419,22 @@ fun SandboxWorkspaceScreen(
                                         )
                                     )
                                 } else {
+                                    val renderedCode = remember(selectedFile.content, showLineNumbers) {
+                                        if (!showLineNumbers || selectedFile.content.isEmpty()) {
+                                            selectedFile.content
+                                        } else {
+                                            selectedFile.content.lines().mapIndexed { idx, line ->
+                                                "${(idx + 1).toString().padStart(4, ' ')} | $line"
+                                            }.joinToString("\n")
+                                        }
+                                    }
                                     Box(
                                         modifier = Modifier
                                             .fillMaxSize()
                                             .verticalScroll(rememberScrollState())
                                     ) {
                                         TerminalConsoleBox(
-                                            text = selectedFile.content,
+                                            text = renderedCode,
                                             modifier = Modifier.fillMaxWidth()
                                         )
                                     }
@@ -481,7 +548,6 @@ fun SandboxWorkspaceScreen(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    // Seção 1: Criar Repositório NOVO no GitHub a partir do projeto local
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -575,7 +641,6 @@ fun SandboxWorkspaceScreen(
 
                     HorizontalDivider(color = DarkBorder)
 
-                    // Seção 2: Commit em repositório GitHub existente
                     Text(
                         text = "Commit em Repositório Conectado ($activeRepo)",
                         fontSize = 13.sp,
