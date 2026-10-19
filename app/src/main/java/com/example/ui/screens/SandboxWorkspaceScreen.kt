@@ -327,10 +327,10 @@ fun SandboxWorkspaceScreen(
                                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                                         ) {
                                             Text(
-                                                text = if (syntaxReport.passed) "✓ Sintaxe OK ($lineCount linhas)" else "⚠️ ${syntaxReport.issues.firstOrNull()?.message ?: "Alerta de sintaxe"}",
+                                                text = if (syntaxReport.isValid) "✓ Sintaxe OK ($lineCount linhas)" else "⚠️ ${syntaxReport.issues.firstOrNull() ?: syntaxReport.summary}",
                                                 fontSize = 9.sp,
                                                 fontWeight = FontWeight.SemiBold,
-                                                color = if (syntaxReport.passed) AccentGreen else AccentYellow,
+                                                color = if (syntaxReport.isValid) AccentGreen else AccentYellow,
                                                 maxLines = 1
                                             )
                                             if (selectedFile.isModified) {
