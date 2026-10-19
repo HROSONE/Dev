@@ -34,15 +34,16 @@ object ChatIntentClassifier {
     )
 
     private val directActionPatterns = listOf(
-        Regex("\\b(implemente|implementar|construa|crie|adicione|remova|exclua|apague|corrija|conserte|refatore|altere|edite|modifique|aplique|execute|rode|instale|publique|envie|fa[cç]a\\s+merge|fa[cç]a\\s+(?:a\\s+)?altera[cç][aã]o|atualize|integre|configure|migre|substitua|repare|melhore|otimize|ajuste|reescreva)\\b"),
-        Regex("\\b(implement|create|add|remove|delete|fix|refactor|change|edit|modify|apply|run|install|publish|merge|update|integrate|configure|migrate|replace|repair|improve|optimize)\\b")
+        Regex("\\b(implemente|implementar|construa|construir|crie|criar|cria|fa[cç]a|faz|fazer|gere|gera|gerar|escreva|escreve|escrever|desenvolva|desenvolver|monte|montar|produza|produzir|salve|salvar|grave|gravar|adicione|adicionar|remova|remover|exclua|excluir|apague|apagar|corrija|corrigir|conserte|consertar|refatore|refatorar|altere|alterar|edite|editar|modifique|modificar|aplique|aplicar|execute|executar|rode|rodar|instale|instalar|publique|publicar|envie|fa[cç]a\\s+merge|fa[cç]a\\s+(?:a\\s+)?altera[cç][aã]o|atualize|atualizar|integre|integrar|configure|configurar|migre|migrar|substitua|substituir|repare|reparar|melhore|melhorar|otimize|otimizar|ajuste|ajustar|reescreva|reescrever)\\b"),
+        Regex("\\b(implement|create|build|make|generate|write|develop|save|add|remove|delete|fix|refactor|change|edit|modify|apply|run|install|publish|merge|update|integrate|configure|migrate|replace|repair|improve|optimize)\\b"),
+        Regex("\\b(index\\.html?|\\w+\\.(?:html?|css|js|jsx|ts|tsx|kt|kts|py|java|json|xml|sql))\\b")
     )
 
     // Polite, explicit requests are actions even when phrased as questions.
     private val explicitActionRequestPatterns = listOf(
-        Regex("\\b(?:pode|poderia|consegue|conseguiria)\\s+(?:por\\s+favor\\s+)?(?:me\\s+)?(?:implementar|criar|adicionar|remover|excluir|apagar|corrigir|consertar|refatorar|alterar|editar|modificar|aplicar|executar|rodar|instalar|publicar|integrar|configurar|atualizar|substituir|melhorar|ajustar)\\b"),
-        Regex("\\b(?:can|could|would\\s+you)\\s+(?:please\\s+)?(?:implement|create|add|remove|delete|fix|refactor|change|edit|modify|apply|run|install|publish|integrate|configure|update|replace|improve)\\b"),
-        Regex("\\b(?:quero|preciso|solicito|gostaria)\\s+que\\s+(?:voc[eê]\\s+)?(?:implemente|crie|adicione|remova|corrija|refatore|altere|edite|modifique|execute|publique|integre|configure|atualize|melhore|ajuste|fa[cç]a)\\b")
+        Regex("\\b(?:pode|poderia|consegue|conseguiria)\\s+(?:por\\s+favor\\s+)?(?:me\\s+)?(?:implementar|criar|construir|fazer|gerar|escrever|desenvolver|montar|salvar|adicionar|remover|excluir|apagar|corrigir|consertar|refatorar|alterar|editar|modificar|aplicar|executar|rodar|instalar|publicar|integrar|configurar|atualizar|substituir|melhorar|ajustar)\\b"),
+        Regex("\\b(?:can|could|would\\s+you)\\s+(?:please\\s+)?(?:implement|create|build|make|generate|write|add|remove|delete|fix|refactor|change|edit|modify|apply|run|install|publish|integrate|configure|update|replace|improve)\\b"),
+        Regex("\\b(?:quero|preciso|solicito|gostaria)\\s+que\\s+(?:voc[eê]\\s+)?(?:implemente|crie|construa|fa[cç]a|gere|escreva|desenvolva|monte|salve|adicione|remova|corrija|refatore|altere|edite|modifique|execute|publique|integre|configure|atualize|melhore|ajuste)\\b")
     )
 
     private val explanationPatterns = listOf(
@@ -108,7 +109,7 @@ object ChatIntentClassifier {
         ChatIntent.PLANNING ->
             "INTENÇÃO: PLANEJAMENTO. Inspecione o projeto e entregue etapas claras, arquivos afetados e critérios de validação."
         ChatIntent.IMPLEMENTATION_REQUEST ->
-            "INTENÇÃO: IMPLEMENTAÇÃO AUTÔNOMA (ESTILO CLAUDE CODE). Pesquise, leia os arquivos relevantes, aplique as edições cirúrgicas necessárias (edit_file ou write_file) e verifique o resultado antes de dar a resposta final."
+            "INTENÇÃO: IMPLEMENTAÇÃO E CRIAÇÃO DE ARQUIVOS NO WORKSPACE. Use write_file ou edit_file para criar/atualizar cada arquivo pedido no workspace (para páginas web/HTML, crie um index.html único, inteiro e completo com CSS e JS integrados) e também mostre o código em bloco ``` separado do texto na resposta final."
         ChatIntent.AMBIGUOUS ->
             "INTENÇÃO: EXPLORAÇÃO. Use as ferramentas de leitura se precisar de contexto ou responda de forma direta."
     }

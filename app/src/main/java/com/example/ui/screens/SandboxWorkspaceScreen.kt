@@ -20,7 +20,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -29,9 +31,12 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.engine.SyntaxVerifier
+import com.example.data.engine.WorkspaceCodeAutoSaver
 import com.example.data.model.RepoFile
+import com.example.ui.components.HtmlPreviewDialog
 import com.example.ui.components.TerminalConsoleBox
 import com.example.ui.theme.*
+import java.io.File
 
 @Composable
 fun SandboxWorkspaceScreen(
@@ -54,8 +59,10 @@ fun SandboxWorkspaceScreen(
     onCommitFile: (String) -> Unit = {},
     onCommitModifiedFiles: (String) -> Unit = {},
     onCreateGitHubRepo: (name: String, description: String, isPrivate: Boolean, token: String) -> Unit = { _, _, _, _ -> },
+    workspaceRoot: File? = null,
     modifier: Modifier = Modifier
 ) {
+    val clipboard = LocalClipboardManager.current
     var selectedTab by remember { mutableIntStateOf(0) }
     var terminalInput by remember { mutableStateOf("") }
     var fileFilterQuery by remember { mutableStateOf("") }
@@ -67,6 +74,7 @@ fun SandboxWorkspaceScreen(
     var showNewFileDialog by remember { mutableStateOf(false) }
     var newFilePath by remember { mutableStateOf("") }
     var commitMessageInput by remember { mutableStateOf("") }
+    var previewFile by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     var newGhRepoName by remember(activeRepo) {
         mutableStateOf(activeRepo.removePrefix("local/").substringAfterLast('/').ifBlank { "meu-app-devagent" })
@@ -80,6 +88,15 @@ fun SandboxWorkspaceScreen(
         if (q.isEmpty()) files else files.filter { it.path.lowercase().contains(q) }
     }
 
+    previewFile?.let { (title, htmlContent) ->
+        HtmlPreviewDialog(
+            title = title,
+            rawHtmlCode = htmlContent,
+            workspaceRoot = workspaceRoot,
+            onDismiss = { previewFile = null }
+        )
+    }
+
     if (showNewFileDialog) {
         AlertDialog(
             onDismissRequest = { showNewFileDialog = false },
@@ -88,7 +105,7 @@ fun SandboxWorkspaceScreen(
                 OutlinedTextField(
                     value = newFilePath,
                     onValueChange = { newFilePath = it },
-                    label = { Text("Ex.: app/src/main/java/com/example/Novo.kt") },
+                    label = { Text("Ex.: index.html ou app/src/main/Novo.kt") },
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = TextPrimary,
@@ -102,7 +119,7 @@ fun SandboxWorkspaceScreen(
                 TextButton(
                     enabled = newFilePath.isNotBlank(),
                     onClick = {
-                        val path = newFilePath.trim()
+                        val path = WorkspaceCodeAutoSaver.normalizeHtmlTypo(newFilePath.trim())
                         newFilePath = ""
                         showNewFileDialog = false
                         onSaveFile(path, "")
@@ -141,17 +158,17 @@ fun SandboxWorkspaceScreen(
                 Spacer(modifier = Modifier.width(8.dp))
                 Column {
                     Text(
-                        text = "IDE Workspace & SyntaxGuard",
+                        text = "IDE Workspace & Preview",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         color = TextPrimary
                     )
                     Text(
-                        text = activeRepo.ifBlank { "Nenhum projeto aberto" },
+                        text = activeRepo.ifBlank { "Workspace Local (${files.size} arq.)" },
                         fontSize = 11.sp,
                         color = when {
-                            activeRepo.isBlank() -> TextMuted
-                            isLocalOnlyProject || activeRepo.startsWith("local/") -> AccentYellow
+                            activeRepo.isBlank() && files.isEmpty() -> TextMuted
+                            isLocalOnlyProject || activeRepo.startsWith("local/") || activeRepo.isBlank() -> AccentYellow
                             else -> AccentGreen
                         }
                     )
@@ -230,7 +247,7 @@ fun SandboxWorkspaceScreen(
                 Row(modifier = Modifier.fillMaxSize()) {
                     Column(
                         modifier = Modifier
-                            .weight(0.38f)
+                            .weight(0.36f)
                             .fillMaxHeight()
                             .background(DarkSurfaceVariant)
                             .border(width = 0.5.dp, color = DarkBorder)
@@ -292,7 +309,7 @@ fun SandboxWorkspaceScreen(
 
                     Box(
                         modifier = Modifier
-                            .weight(0.62f)
+                            .weight(0.64f)
                             .fillMaxHeight()
                             .background(TerminalBackground)
                             .padding(8.dp)
@@ -304,6 +321,13 @@ fun SandboxWorkspaceScreen(
                             }
                             val lineCount = remember(activeSource) {
                                 if (activeSource.isEmpty()) 0 else activeSource.lines().size
+                            }
+                            val isPreviewable = remember(selectedFile.path, activeSource) {
+                                WorkspaceCodeAutoSaver.isPreviewableWebCode(
+                                    language = selectedFile.language,
+                                    filePath = selectedFile.path,
+                                    code = activeSource
+                                )
                             }
 
                             Column(modifier = Modifier.fillMaxSize()) {
@@ -327,7 +351,8 @@ fun SandboxWorkspaceScreen(
                                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                                         ) {
                                             Text(
-                                                text = if (syntaxReport.isValid) "✓ Sintaxe OK ($lineCount linhas)" else "⚠️ ${syntaxReport.issues.firstOrNull() ?: syntaxReport.summary}",
+                                                text = if (syntaxReport.isValid) "✓ Sintaxe OK ($lineCount linhas)"
+                                                else "⚠️ ${syntaxReport.issues.firstOrNull() ?: "Alerta de sintaxe"}",
                                                 fontSize = 9.sp,
                                                 fontWeight = FontWeight.SemiBold,
                                                 color = if (syntaxReport.isValid) AccentGreen else AccentYellow,
@@ -343,11 +368,48 @@ fun SandboxWorkspaceScreen(
                                             }
                                         }
                                     }
-                                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        if (isPreviewable) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(6.dp))
+                                                    .background(AccentGreen.copy(alpha = 0.2f))
+                                                    .clickable {
+                                                        previewFile = selectedFile.path to activeSource
+                                                    }
+                                                    .padding(horizontal = 7.dp, vertical = 3.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.PlayArrow,
+                                                    contentDescription = "Preview HTML",
+                                                    tint = AccentGreen,
+                                                    modifier = Modifier.size(13.dp)
+                                                )
+                                                Spacer(Modifier.width(2.dp))
+                                                Text(
+                                                    text = "Play",
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = AccentGreen
+                                                )
+                                            }
+                                        }
+
+                                        TextButton(
+                                            onClick = { clipboard.setText(AnnotatedString(activeSource)) },
+                                            contentPadding = PaddingValues(horizontal = 5.dp, vertical = 2.dp)
+                                        ) {
+                                            Text("Copiar", fontSize = 10.sp, color = TextSecondary)
+                                        }
+
                                         if (!isEditing) {
                                             TextButton(
                                                 onClick = { showLineNumbers = !showLineNumbers },
-                                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                                contentPadding = PaddingValues(horizontal = 5.dp, vertical = 2.dp)
                                             ) {
                                                 Text(
                                                     if (showLineNumbers) "# Linhas" else "Texto",
@@ -359,7 +421,7 @@ fun SandboxWorkspaceScreen(
                                         if (selectedFile.isModified && !isEditing && !isLocalOnlyProject) {
                                             TextButton(
                                                 onClick = { onRevertFile(selectedFile.path) },
-                                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                                contentPadding = PaddingValues(horizontal = 5.dp, vertical = 2.dp)
                                             ) {
                                                 Text("Reverter", fontSize = 10.sp, color = AccentRed)
                                             }
@@ -370,7 +432,7 @@ fun SandboxWorkspaceScreen(
                                                     editorContent = selectedFile.content
                                                     isEditing = true
                                                 },
-                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
                                             ) {
                                                 Text("Editar", fontSize = 11.sp, color = AccentCyan, fontWeight = FontWeight.Bold)
                                             }
@@ -380,7 +442,7 @@ fun SandboxWorkspaceScreen(
                                                     onSaveFile(selectedFile.path, editorContent)
                                                     isEditing = false
                                                 },
-                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
                                             ) {
                                                 Text("Salvar", fontSize = 11.sp, color = AccentGreen, fontWeight = FontWeight.Bold)
                                             }
@@ -389,7 +451,7 @@ fun SandboxWorkspaceScreen(
                                                     editorContent = selectedFile.content
                                                     isEditing = false
                                                 },
-                                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                                contentPadding = PaddingValues(horizontal = 5.dp, vertical = 2.dp)
                                             ) {
                                                 Text("Cancelar", fontSize = 10.sp, color = TextSecondary)
                                             }
@@ -446,7 +508,7 @@ fun SandboxWorkspaceScreen(
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 Text(
-                                    text = "Selecione um arquivo, importe do celular ou crie um projeto local.",
+                                    text = "Peça um arquivo no chat, importe do celular ou crie um projeto local.",
                                     fontSize = 12.sp,
                                     color = TextMuted
                                 )
@@ -497,7 +559,7 @@ fun SandboxWorkspaceScreen(
                             value = terminalInput,
                             onValueChange = { terminalInput = it },
                             placeholder = {
-                                Text("tree, grep termo app/src, find, cat README.md", fontSize = 11.sp, color = TextMuted)
+                                Text("tree, grep termo app/src, find, cat index.html", fontSize = 11.sp, color = TextMuted)
                             },
                             modifier = Modifier
                                 .weight(1f)

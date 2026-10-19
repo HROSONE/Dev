@@ -813,7 +813,12 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                     selected = uiState.activeTab == 1,
                     onClick = { viewModel.setTab(1) },
                     icon = { Icon(Icons.Default.FolderOpen, "Arquivos") },
-                    label = { Text("Arquivos", fontSize = 11.sp) },
+                    label = {
+                        Text(
+                            if (uiState.repoFiles.isNotEmpty()) "Arquivos (${uiState.repoFiles.size})" else "Arquivos",
+                            fontSize = 11.sp
+                        )
+                    },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = AccentCyan,
                         selectedTextColor = AccentCyan,
@@ -859,6 +864,10 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                     onQuickPromptSelected = { p ->
                         viewModel.setPrompt(p)
                         viewModel.submitPrompt()
+                    },
+                    workspaceRoot = viewModel.workspaceDir,
+                    onOpenCodeInWorkspace = { path, code ->
+                        viewModel.openCodeCardInWorkspace(path, code)
                     }
                 )
                 1 -> SandboxWorkspaceScreen(
@@ -885,7 +894,8 @@ fun DevAgentApp(viewModel: DevAgentViewModel) {
                     onCommitModifiedFiles = { msg -> viewModel.commitModifiedFilesToGitHub(msg) },
                     onCreateGitHubRepo = { name, desc, isPrivate, token ->
                         viewModel.createGitHubRepoFromWorkspace(name, desc, isPrivate, token)
-                    }
+                    },
+                    workspaceRoot = viewModel.workspaceDir
                 )
                 2 -> ArchitectureGuideScreen()
             }

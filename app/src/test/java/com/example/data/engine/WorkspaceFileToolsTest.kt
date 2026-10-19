@@ -60,6 +60,46 @@ class WorkspaceFileToolsTest {
     }
 
     @Test
+    fun workspaceCodeAutoSaverSeparatesProseAndConsolidatesIndexHtml() {
+        val root = temporaryFolder.newFolder("workspace")
+        val rawModelResponse = """
+            Aqui está a página web solicitada em `index.hml`:
+            ```html
+            <div class="box">Olá Mundo</div>
+            ```
+            E o estilo separado:
+            ```css
+            .box { color: cyan; }
+            ```
+            E o script:
+            ```js
+            console.log('pronto');
+            ```
+        """.trimIndent()
+
+        val segments = WorkspaceCodeAutoSaver.parseRichSegments(rawModelResponse)
+        val proseCount = segments.count { it is RichMessageSegment.Prose }
+        val codeCards = segments.filterIsInstance<RichMessageSegment.CodeCard>()
+        assertTrue(proseCount >= 2)
+        val htmlCard = codeCards.first { it.filePath == "index.html" }
+        assertTrue(htmlCard.code.contains("<!DOCTYPE html>"))
+        assertTrue(htmlCard.code.contains("<style>"))
+        assertTrue(htmlCard.code.contains(".box { color: cyan; }"))
+        assertTrue(htmlCard.code.contains("<script>"))
+        assertTrue(htmlCard.code.contains("console.log('pronto');"))
+        assertTrue(htmlCard.code.contains("</html>"))
+
+        val saved = WorkspaceCodeAutoSaver.autoSaveGeneratedCodeToWorkspace(
+            workspaceRoot = root,
+            userPrompt = "Crie um index.hml completo",
+            modelResponse = rawModelResponse
+        )
+        assertTrue(saved.any { it.suggestedPath == "index.html" })
+        assertTrue(java.io.File(root, "index.html").isFile)
+        assertTrue(java.io.File(root, "index.html").readText().contains("<!DOCTYPE html>"))
+    }
+
+    @Test
     fun patchLinesReplacesTargetRangeAndRunsSyntaxCheck() {
         val root = temporaryFolder.newFolder("workspace")
         java.io.File(root, "src").mkdirs()

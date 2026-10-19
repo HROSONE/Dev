@@ -265,7 +265,6 @@ object QwenCoderClient {
             val msg = choices?.optJSONObject(0)?.optJSONObject("message")
             val content = msg?.optString("content").orEmpty()
             if (content.isNotBlank()) return content
-            // alguns builds devolvem text direto
             choices?.optJSONObject(0)?.optString("text").orEmpty()
         } catch (_: Exception) {
             ""
@@ -273,7 +272,7 @@ object QwenCoderClient {
     }
 
     private const val DEFAULT_CHAT_SYSTEM =
-        "Você é o Qwen, assistente útil e amigável no app DevAgent. " +
-            "Converse naturalmente em português. Responda perguntas, explique e ajude. " +
-            "Não force geração de código nem JSON de ferramentas se o usuário só estiver conversando."
+        "Você é o Qwen 2.5 Coder no app DevAgent. Responda em português. " +
+            "SEMPRE separe a explicação em texto normal dos blocos de código usando ```linguagem nome_do_arquivo (ex.: ```html index.html). " +
+            "Quando gerar HTML ou páginas web, produza um único arquivo `index.html` inteiro, completo e autocontido (com <style> e <script> integrados, do <!DOCTYPE html> ao </html>), sem quebrar nem abreviar."
 }

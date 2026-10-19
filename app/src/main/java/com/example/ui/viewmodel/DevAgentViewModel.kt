@@ -16,6 +16,7 @@ import com.example.data.engine.ChatHistoryStore
 import com.example.data.engine.DevAgentEngine
 import com.example.data.engine.LocalProjectCreator
 import com.example.data.engine.WorkspaceChangeTracker
+import com.example.data.engine.WorkspaceCodeAutoSaver
 import com.example.data.engine.WorkspaceCommandRunner
 import com.example.data.model.*
 import com.example.data.update.AppUpdateChecker
@@ -81,7 +82,7 @@ data class DevAgentUiState(
 
 class DevAgentViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val workspaceDir = File(getApplication<Application>().filesDir, "devagent-workspace")
+    val workspaceDir = File(getApplication<Application>().filesDir, "devagent-workspace")
     private val engine: DevAgentEngine by lazy { DevAgentEngine(workspaceDir) }
     private val githubClient = GitHubRepositoryClient()
     private val commandRunner by lazy { WorkspaceCommandRunner(workspaceDir) }
@@ -492,6 +493,13 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
     fun setTab(tab: Int) { _uiState.update { it.copy(activeTab = tab) } }
     fun selectFile(file: RepoFile) { _uiState.update { it.copy(selectedFile = file) } }
 
+    fun openCodeCardInWorkspace(relativePath: String, content: String) {
+        val cleanPath = WorkspaceCodeAutoSaver.normalizeHtmlTypo(relativePath.trim().removePrefix("/"))
+            .ifBlank { "index.html" }
+        saveManualFileEdit(cleanPath, content)
+        _uiState.update { it.copy(activeTab = 1) }
+    }
+
     fun createLocalProject(projectName: String, template: ProjectTemplate) {
         val cleanName = projectName.trim().ifBlank { "meu-projeto" }
         viewModelScope.launch {
@@ -636,7 +644,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun saveManualFileEdit(relativePath: String, newContent: String) {
-        val cleanPath = relativePath.trim().removePrefix("/")
+        val cleanPath = WorkspaceCodeAutoSaver.normalizeHtmlTypo(relativePath.trim().removePrefix("/"))
         if (cleanPath.isBlank()) return
         viewModelScope.launch {
             try {
@@ -653,7 +661,12 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                 if (repositoryBaseline == null) repositoryBaseline = emptyMap()
                 refreshWorkspaceListing(selectPath = cleanPath)
                 _uiState.update {
-                    it.copy(repositoryStatus = "Arquivo salvo no workspace: $cleanPath")
+                    val repoName = it.activeRepo.ifBlank { "local/workspace" }
+                    it.copy(
+                        activeRepo = repoName,
+                        isLocalOnlyProject = repoName.startsWith("local/"),
+                        repositoryStatus = "Arquivo salvo no workspace: $cleanPath"
+                    )
                 }
             } catch (e: Exception) {
                 _uiState.update {
@@ -934,6 +947,8 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
         }
         persistCurrentChatSession()
 
+        var lastMutatedFilePath: String? = null
+
         activeJob = viewModelScope.launch {
             try {
                 engine.executeTask(
@@ -945,8 +960,8 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                     conversationHistory = priorHistory,
                     confirmMutation = { toolName, path, contentPreview ->
                         if (repositoryBaseline == null) repositoryBaseline = emptyMap()
+                        lastMutatedFilePath = path
                         if (_uiState.value.autoApproveEdits) {
-                            refreshWorkspaceListing()
                             return@executeTask true
                         }
                         val oldContent = _uiState.value.repoFiles.find { it.path == path }?.content.orEmpty()
@@ -1005,17 +1020,42 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                                     }
                                 })
                             }
-                            if (event.toolCall.type in setOf(ToolType.EDIT_FILE, ToolType.WRITE_FILE, ToolType.DELETE_FILE)) {
-                                refreshWorkspaceListing()
+                            if (event.toolCall.type in setOf(
+                                    ToolType.EDIT_FILE,
+                                    ToolType.PATCH_LINES,
+                                    ToolType.WRITE_FILE,
+                                    ToolType.DELETE_FILE
+                                )
+                            ) {
+                                val detailPath = event.toolCall.detail
+                                    .removePrefix("path=")
+                                    .substringBefore(" (")
+                                    .substringBefore(":")
+                                    .trim()
+                                    .takeIf { it.isNotBlank() }
+                                if (detailPath != null) lastMutatedFilePath = detailPath
+                                refreshWorkspaceListing(selectPath = lastMutatedFilePath)
                             }
                             persistCurrentChatSession()
                         }
                         is AgentExecutionEvent.MutationProposed -> { }
                         is AgentExecutionEvent.FinalResponseChunk -> {
                             _uiState.update { s ->
+                                val repoLabel = if (s.activeRepo.isBlank() && lastMutatedFilePath != null) {
+                                    "local/workspace"
+                                } else {
+                                    s.activeRepo
+                                }
                                 s.copy(
+                                    activeRepo = repoLabel,
+                                    isLocalOnlyProject = repoLabel.startsWith("local/"),
                                     isThinking = false,
                                     pendingMutation = null,
+                                    repositoryStatus = if (lastMutatedFilePath != null) {
+                                        "Arquivo atualizado no workspace: $lastMutatedFilePath"
+                                    } else {
+                                        s.repositoryStatus
+                                    },
                                     messages = s.messages.map {
                                         if (it.id == agentMessageId) it.copy(
                                             text = event.text, isThinking = false, metrics = event.metrics
@@ -1023,7 +1063,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                                     }
                                 )
                             }
-                            refreshWorkspaceListing()
+                            refreshWorkspaceListing(selectPath = lastMutatedFilePath)
                             persistCurrentChatSession()
                         }
                         is AgentExecutionEvent.Error -> {
@@ -1038,7 +1078,7 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                                     }
                                 )
                             }
-                            refreshWorkspaceListing()
+                            refreshWorkspaceListing(selectPath = lastMutatedFilePath)
                             persistCurrentChatSession()
                         }
                     }
@@ -1094,12 +1134,18 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
     }
 
     private fun languageFor(path: String) = when (path.substringAfterLast('.').lowercase()) {
+        "html", "htm" -> "html"
+        "css" -> "css"
+        "js", "jsx" -> "javascript"
+        "ts", "tsx" -> "typescript"
         "kt", "kts" -> "kotlin"
         "java" -> "java"
-        "xml" -> "xml"
+        "xml", "svg" -> "xml"
         "json" -> "json"
         "md" -> "markdown"
         "py" -> "python"
+        "sql" -> "sql"
+        "sh" -> "bash"
         else -> "text"
     }
 }
