@@ -18,17 +18,16 @@ enum class LlmProvider(val label: String) {
     ;
 
     companion object {
-        const val DEFAULT_OPENROUTER_MODEL = "qwen/qwen-2.5-coder-32b-instruct"
+        // Free e bom para código — sem cobrança na OpenRouter
+        const val DEFAULT_OPENROUTER_MODEL = "qwen/qwen-2.5-coder-32b-instruct:free"
 
         val openRouterPresets: List<OpenRouterModelPreset> = listOf(
-            OpenRouterModelPreset("Qwen 2.5 Coder 32B", "qwen/qwen-2.5-coder-32b-instruct", free = false),
+            OpenRouterModelPreset("Qwen 2.5 Coder 32B (free)", "qwen/qwen-2.5-coder-32b-instruct:free", free = true),
             OpenRouterModelPreset("Qwen 3.8 27B (free)", "qwen/qwen3.8-27b:free", free = true),
+            OpenRouterModelPreset("Qwen3 32B (free)", "qwen/qwen3-32b:free", free = true),
+            OpenRouterModelPreset("Qwen3 Coder (free)", "qwen/qwen3-coder:free", free = true),
+            OpenRouterModelPreset("Qwen 2.5 Coder 32B", "qwen/qwen-2.5-coder-32b-instruct", free = false),
             OpenRouterModelPreset("DeepSeek V4.1 Flash", "deepseek/deepseek-v4.1-flash", free = false),
-            OpenRouterModelPreset("DeepSeek V4 Flash", "deepseek/deepseek-v4-flash", free = false),
-            OpenRouterModelPreset("Claude Sonnet 5.5", "anthropic/claude-sonnet-5.5", free = false),
-            OpenRouterModelPreset("GPT Luna", "openai/gpt-luna", free = false),
-            OpenRouterModelPreset("GLM 5.3 Flash", "z-ai/glm-5.3-flash", free = false),
-            OpenRouterModelPreset("Nemotron 3.5 Lightning (free)", "nvidia/nemotron-3.5-lightning:free", free = true),
             OpenRouterModelPreset("OpenRouter free auto", "openrouter/free", free = true)
         )
     }
