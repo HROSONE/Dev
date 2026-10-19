@@ -137,19 +137,30 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    private fun persistCurrentChatSession() {
-        val state = _uiState.value
-        val sessionId = state.activeSessionId.ifBlank { chatHistoryStore.newSessionId() }
-        chatHistoryStore.saveSession(
-            sessionId = sessionId,
-            activeRepo = state.activeRepo,
-            messages = state.messages
-        )
-        _uiState.update {
-            it.copy(
-                activeSessionId = sessionId,
-                chatSessions = chatHistoryStore.listSessions()
-            )
+    private var persistJob: Job? = null
+
+    /**
+     * Salva a conversa em disco fora da main thread. Durante a execução do agente as chamadas
+     * chegam em rajadas (cada ferramenta), então agrupamos em uma escrita a cada ~600ms.
+     */
+    private fun persistCurrentChatSession(immediate: Boolean = true) {
+        val sessionId = _uiState.value.activeSessionId.ifBlank { chatHistoryStore.newSessionId() }
+        if (_uiState.value.activeSessionId != sessionId) {
+            _uiState.update { it.copy(activeSessionId = sessionId) }
+        }
+        persistJob?.cancel()
+        persistJob = viewModelScope.launch {
+            if (!immediate) kotlinx.coroutines.delay(600)
+            val state = _uiState.value
+            val sessions = withContext(Dispatchers.IO) {
+                chatHistoryStore.saveSession(
+                    sessionId = sessionId,
+                    activeRepo = state.activeRepo,
+                    messages = state.messages
+                )
+                chatHistoryStore.listSessions()
+            }
+            _uiState.update { it.copy(chatSessions = sessions) }
         }
     }
 
@@ -964,7 +975,12 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                         if (_uiState.value.autoApproveEdits) {
                             return@executeTask true
                         }
-                        val oldContent = _uiState.value.repoFiles.find { it.path == path }?.content.orEmpty()
+                        val oldContent = withContext(Dispatchers.IO) {
+                            runCatching {
+                                val f = File(workspaceDir, path)
+                                if (f.isFile) f.readText(Charsets.UTF_8) else ""
+                            }.getOrDefault("")
+                        }
                         val deferred = CompletableDeferred<Boolean>()
                         mutationDecision = deferred
                         _uiState.update {
@@ -983,62 +999,52 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                 ).collect { event ->
                     when (event) {
                         is AgentExecutionEvent.ThinkingTick ->
-                            _uiState.update { s ->
-                                s.copy(
-                                    thinkingSeconds = event.seconds,
-                                    messages = s.messages.map {
-                                        if (it.id == agentMessageId) it.copy(thinkingSeconds = event.seconds) else it
-                                    }
-                                )
+                            updateAgentMessage(agentMessageId, thinkingSeconds = event.seconds) {
+                                it.copy(thinkingSeconds = event.seconds)
                             }
                         is AgentExecutionEvent.ThoughtStepAdded ->
-                            _uiState.update { s ->
-                                s.copy(messages = s.messages.map {
-                                    if (it.id == agentMessageId) it.copy(thoughtSteps = it.thoughtSteps + event.step) else it
-                                })
-                            }
-                        is AgentExecutionEvent.ToolCallStarted ->
-                            _uiState.update { s ->
-                                s.copy(
-                                    commandsExecuted = s.commandsExecuted + 1,
-                                    messages = s.messages.map {
-                                        if (it.id == agentMessageId) it.copy(toolCalls = it.toolCalls + event.toolCall) else it
+                            updateAgentMessage(agentMessageId) { it.copy(thoughtSteps = it.thoughtSteps + event.step) }
+                        is AgentExecutionEvent.StepUpsert ->
+                            updateAgentMessage(agentMessageId) { msg ->
+                                val idx = msg.steps.indexOfFirst { it.id == event.step.id }
+                                msg.copy(
+                                    steps = if (idx >= 0) {
+                                        msg.steps.toMutableList().also { it[idx] = event.step }
+                                    } else {
+                                        msg.steps + event.step
                                     }
                                 )
                             }
+                        is AgentExecutionEvent.StepRemoved ->
+                            updateAgentMessage(agentMessageId) { msg ->
+                                msg.copy(steps = msg.steps.filterNot { it.id == event.stepId })
+                            }
+                        is AgentExecutionEvent.ToolCallStarted -> {
+                            _uiState.update { s -> s.copy(commandsExecuted = s.commandsExecuted + 1) }
+                            updateAgentMessage(agentMessageId) { msg ->
+                                if (msg.toolCalls.any { it.id == event.toolCall.id }) msg
+                                else msg.copy(toolCalls = msg.toolCalls + event.toolCall)
+                            }
+                        }
                         is AgentExecutionEvent.ToolCallUpdated -> {
-                            _uiState.update { s ->
-                                s.copy(messages = s.messages.map { msg ->
-                                    if (msg.id != agentMessageId) msg
-                                    else {
-                                        val exists = msg.toolCalls.any { it.id == event.toolCall.id }
-                                        msg.copy(
-                                            toolCalls = if (exists) msg.toolCalls.map {
-                                                if (it.id == event.toolCall.id) event.toolCall else it
-                                            } else msg.toolCalls + event.toolCall
-                                        )
-                                    }
-                                })
-                            }
-                            if (event.toolCall.type in setOf(
-                                    ToolType.EDIT_FILE,
-                                    ToolType.PATCH_LINES,
-                                    ToolType.WRITE_FILE,
-                                    ToolType.DELETE_FILE
+                            updateAgentMessage(agentMessageId) { msg ->
+                                val exists = msg.toolCalls.any { it.id == event.toolCall.id }
+                                msg.copy(
+                                    toolCalls = if (exists) msg.toolCalls.map {
+                                        if (it.id == event.toolCall.id) event.toolCall else it
+                                    } else msg.toolCalls + event.toolCall
                                 )
-                            ) {
-                                val detailPath = event.toolCall.detail
-                                    .removePrefix("path=")
-                                    .substringBefore(" (")
-                                    .substringBefore(":")
-                                    .trim()
-                                    .takeIf { it.isNotBlank() }
-                                if (detailPath != null) lastMutatedFilePath = detailPath
+                            }
+                            val change = event.toolCall.fileChange
+                            if (change != null) {
+                                lastMutatedFilePath = change.path.takeIf {
+                                    change.kind != FileChangeKind.DELETED
+                                } ?: lastMutatedFilePath
                                 refreshWorkspaceListing(selectPath = lastMutatedFilePath)
                             }
-                            persistCurrentChatSession()
+                            persistCurrentChatSession(immediate = false)
                         }
-                        is AgentExecutionEvent.MutationProposed -> { }
+                        is AgentExecutionEvent.MutationProposed -> Unit
                         is AgentExecutionEvent.FinalResponseChunk -> {
                             _uiState.update { s ->
                                 val repoLabel = if (s.activeRepo.isBlank() && lastMutatedFilePath != null) {
@@ -1051,14 +1057,13 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                                     isLocalOnlyProject = repoLabel.startsWith("local/"),
                                     isThinking = false,
                                     pendingMutation = null,
-                                    repositoryStatus = if (lastMutatedFilePath != null) {
-                                        "Arquivo atualizado no workspace: $lastMutatedFilePath"
-                                    } else {
-                                        s.repositoryStatus
-                                    },
+                                    repositoryStatus = describeRunChanges(event.metrics) ?: s.repositoryStatus,
                                     messages = s.messages.map {
                                         if (it.id == agentMessageId) it.copy(
-                                            text = event.text, isThinking = false, metrics = event.metrics
+                                            text = event.text,
+                                            isThinking = false,
+                                            metrics = event.metrics,
+                                            steps = it.steps.map { step -> step.copy(isLive = false) }
                                         ) else it
                                     }
                                 )
@@ -1073,7 +1078,10 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                                     pendingMutation = null,
                                     messages = s.messages.map {
                                         if (it.id == agentMessageId) it.copy(
-                                            text = event.message, isThinking = false
+                                            text = "⚠️ " + event.message,
+                                            isThinking = false,
+                                            metrics = event.metrics ?: it.metrics,
+                                            steps = it.steps.map { step -> step.copy(isLive = false) }
                                         ) else it
                                     }
                                 )
@@ -1083,23 +1091,63 @@ class DevAgentViewModel(application: Application) : AndroidViewModel(application
                         }
                     }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                finalizeInterruptedMessage(agentMessageId, "⏹ Execução interrompida pelo usuário.")
+                throw e
             } catch (e: Exception) {
-                _uiState.update { s ->
-                    s.copy(
-                        isThinking = false,
-                        pendingMutation = null,
-                        messages = s.messages.map {
-                            if (it.id == agentMessageId) it.copy(
-                                text = e.message ?: "Erro", isThinking = false
-                            ) else it
-                        }
-                    )
-                }
-                persistCurrentChatSession()
+                finalizeInterruptedMessage(agentMessageId, "⚠️ " + (e.message ?: "Erro inesperado"))
             } finally {
                 activeJob = null
                 mutationDecision = null
             }
+        }
+    }
+
+    private inline fun updateAgentMessage(
+        messageId: String,
+        thinkingSeconds: Double? = null,
+        crossinline transform: (ChatMessage) -> ChatMessage
+    ) {
+        _uiState.update { s ->
+            s.copy(
+                thinkingSeconds = thinkingSeconds ?: s.thinkingSeconds,
+                messages = s.messages.map { if (it.id == messageId) transform(it) else it }
+            )
+        }
+    }
+
+    /** Fecha a mensagem do agente quando a execução para no meio (Parar ou exceção). */
+    private fun finalizeInterruptedMessage(messageId: String, note: String) {
+        _uiState.update { s ->
+            s.copy(
+                isThinking = false,
+                pendingMutation = null,
+                messages = s.messages.map { msg ->
+                    if (msg.id != messageId || !msg.isThinking) msg
+                    else msg.copy(
+                        text = msg.text.ifBlank { note },
+                        isThinking = false,
+                        steps = msg.steps.map { it.copy(isLive = false) },
+                        toolCalls = msg.toolCalls.map {
+                            if (it.status == ExecutionStatus.RUNNING) it.copy(status = ExecutionStatus.FAILED, output = "Interrompido.")
+                            else it
+                        }
+                    )
+                }
+            )
+        }
+        refreshWorkspaceListing()
+        persistCurrentChatSession()
+    }
+
+    private fun describeRunChanges(metrics: AgentMetrics): String? {
+        if (metrics.filesCreated + metrics.filesModified == 0) return null
+        return buildString {
+            append("Agente: ")
+            if (metrics.filesCreated > 0) append("${metrics.filesCreated} arquivo(s) novo(s)")
+            if (metrics.filesCreated > 0 && metrics.filesModified > 0) append(" · ")
+            if (metrics.filesModified > 0) append("${metrics.filesModified} editado(s)")
+            append(" · +${metrics.linesAdded} −${metrics.linesRemoved} linhas")
         }
     }
 

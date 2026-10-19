@@ -35,8 +35,10 @@ class LocalProjectCreatorTest {
             template = ProjectTemplate.WEB_APP
         )
 
+        // O template web é um index.html único e autocontido (CSS e JS embutidos).
         assertTrue(files.contains("index.html"))
-        assertTrue(files.contains("styles.css"))
-        assertTrue(files.contains("app.js"))
+        val html = File(root, "index.html").readText()
+        assertTrue(html.contains("<style>"))
+        assertTrue(html.contains("<script>"))
     }
 }

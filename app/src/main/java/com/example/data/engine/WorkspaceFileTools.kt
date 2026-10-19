@@ -181,6 +181,12 @@ class WorkspaceFileTools(
         }.getOrNull()
     }
 
+    /** Conteúdo atual do arquivo (ou null se não existir) — usado para calcular diffs antes/depois. */
+    fun readRawOrNull(relativePath: String): String? = runCatching {
+        val file = resolve(relativePath)
+        if (file.isFile) file.readText(Charsets.UTF_8) else null
+    }.getOrNull()
+
     fun previewEditFile(
         relativePath: String,
         oldText: String,

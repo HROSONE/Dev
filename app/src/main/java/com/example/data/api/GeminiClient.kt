@@ -42,6 +42,93 @@ object GeminiClient {
         }
     }
 
+    /**
+     * Streaming via `streamGenerateContent?alt=sse`. Com [includeThoughts], os resumos de
+     * pensamento do modelo (parts com `thought=true`) chegam em [LlmStreamListener.onReasoning].
+     */
+    suspend fun streamChat(
+        messages: List<LlmMessage>,
+        systemInstruction: String,
+        modelName: String = DEFAULT_MODEL,
+        includeThoughts: Boolean = false,
+        listener: LlmStreamListener
+    ) {
+        val apiKey = effectiveApiKey()
+        if (apiKey.isBlank() || apiKey == "MY_GEMINI_API_KEY") {
+            throw IllegalStateException("API key do Gemini não configurada. Abra Configurações no app e cole sua chave.")
+        }
+        val contents = JSONArray()
+        for (msg in mergeConsecutive(messages)) {
+            contents.put(JSONObject().apply {
+                put("role", if (msg.role == LlmMessage.Role.USER) "user" else "model")
+                put("parts", JSONArray().put(JSONObject().put("text", msg.content)))
+            })
+        }
+        val payload = JSONObject().apply {
+            put("contents", contents)
+            put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemInstruction))))
+            put("generationConfig", JSONObject().apply {
+                put("temperature", 0.3)
+                put("topP", 0.95)
+                if (includeThoughts) {
+                    put("thinkingConfig", JSONObject().put("includeThoughts", true))
+                }
+            })
+        }
+        val request = Request.Builder()
+            .url("$BASE_URL$modelName:streamGenerateContent?alt=sse")
+            .header("x-goog-api-key", apiKey)
+            .post(payload.toString().toRequestBody("application/json".toMediaType()))
+            .build()
+
+        SseClient.stream(
+            client = okHttpClient,
+            request = request,
+            describeError = { code, body -> describeHttpError(code, body, modelName) }
+        ) { data ->
+            val json = runCatching { JSONObject(data) }.getOrNull() ?: return@stream
+            json.optJSONObject("error")?.let { err ->
+                throw LlmHttpException(err.optInt("code", 500), "Gemini: ${err.optString("message")}")
+            }
+            val candidate = json.optJSONArray("candidates")?.optJSONObject(0) ?: return@stream
+            val parts = candidate.optJSONObject("content")?.optJSONArray("parts") ?: return@stream
+            for (i in 0 until parts.length()) {
+                val part = parts.optJSONObject(i) ?: continue
+                val text = part.optString("text")
+                if (text.isEmpty()) continue
+                if (part.optBoolean("thought", false)) listener.onReasoning(text) else listener.onText(text)
+            }
+        }
+    }
+
+    private fun describeHttpError(code: Int, body: String, modelName: String): String {
+        val detail = SseClient.errorMessage(body, "HTTP $code")
+        val hint = when (code) {
+            400 -> " Verifique o nome do modelo ($modelName)."
+            401, 403 -> " Chave inválida ou sem permissão."
+            404 -> " Modelo '$modelName' não encontrado."
+            429 -> " Limite de requisições; tente de novo em instantes."
+            else -> ""
+        }
+        return "Gemini HTTP $code: $detail.$hint"
+    }
+
+    private fun mergeConsecutive(messages: List<LlmMessage>): List<LlmMessage> {
+        val merged = mutableListOf<LlmMessage>()
+        for (msg in messages) {
+            val last = merged.lastOrNull()
+            if (last != null && last.role == msg.role) {
+                merged[merged.lastIndex] = last.copy(content = last.content + "\n\n" + msg.content)
+            } else {
+                merged += msg
+            }
+        }
+        if (merged.firstOrNull()?.role == LlmMessage.Role.ASSISTANT) {
+            merged.add(0, LlmMessage.user("(continuação da conversa)"))
+        }
+        return merged
+    }
+
     suspend fun queryGemini(
         prompt: String,
         modelName: String = DEFAULT_MODEL,

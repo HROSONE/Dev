@@ -64,10 +64,31 @@ fun AgentChatScreen(
     val clipboard = LocalClipboardManager.current
     var previewTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
 
-    LaunchedEffect(messages.size, isThinking, messages.lastOrNull()?.toolCalls?.size) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.lastIndex)
+    // Acompanha o streaming: rola para o fim enquanto o usuário já estiver perto do fim.
+    val lastMessage = messages.lastOrNull()
+    val streamSignature = lastMessage?.let { msg ->
+        msg.steps.size * 31 + msg.steps.sumOf { it.text.length } + msg.toolCalls.size * 7 +
+            msg.toolCalls.count { it.status == ExecutionStatus.RUNNING } + msg.text.length
+    } ?: 0
+    var followStream by remember { mutableStateOf(true) }
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (listState.isScrollInProgress) {
+            val info = listState.layoutInfo
+            val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: 0
+            followStream = lastVisible >= info.totalItemsCount - 1
         }
+    }
+    LaunchedEffect(messages.size) {
+        followStream = true
+        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
+    }
+    LaunchedEffect(streamSignature) {
+        if (followStream && messages.isNotEmpty() && !listState.isScrollInProgress) {
+            listState.scrollToItem(messages.lastIndex, Int.MAX_VALUE / 2)
+        }
+    }
+    val currentActivity = remember(lastMessage?.steps, lastMessage?.toolCalls, isThinking) {
+        if (!isThinking || lastMessage == null) "" else describeActivity(lastMessage)
     }
 
     // Modal de Preview (Botão ▶ Play) para códigos HTML / Web
@@ -88,7 +109,8 @@ fun AgentChatScreen(
             isThinking = isThinking,
             thinkingSeconds = thinkingSeconds,
             activeRepo = activeRepo,
-            commandsExecuted = commandsExecuted
+            commandsExecuted = commandsExecuted,
+            activity = currentActivity
         )
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -216,20 +238,29 @@ fun ChatMessageItem(
     } else {
         Column(
             modifier = modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            if (message.thoughtSteps.isNotEmpty() || message.isThinking) {
-                ThoughtProcessCard(
-                    thoughtSteps = message.thoughtSteps,
-                    isThinking = message.isThinking
-                )
-            }
-            if (message.toolCalls.isNotEmpty()) {
+            if (message.steps.isNotEmpty()) {
+                // Linha do tempo na ordem real: pensamento → narração → ferramentas → …
+                val toolsById = message.toolCalls.associateBy { it.id }
+                val referencedTools = message.steps.mapNotNull { it.toolCallId }.toSet()
+                message.steps.forEach { step ->
+                    when (step.kind) {
+                        StepKind.REASONING -> LiveReasoningBlock(text = step.text, isLive = step.isLive)
+                        StepKind.NARRATION -> NarrationBlock(text = step.text, isLive = step.isLive)
+                        StepKind.STATUS -> StatusLine(text = step.text, isLive = step.isLive && message.isThinking)
+                        StepKind.TOOL -> toolsById[step.toolCallId]?.let { tool ->
+                            ToolExecutionCard(tool = tool, onToggleExpand = { onToggleToolExpand(tool.id) })
+                        }
+                    }
+                }
+                message.toolCalls.filter { it.id !in referencedTools }.forEach { tool ->
+                    ToolExecutionCard(tool = tool, onToggleExpand = { onToggleToolExpand(tool.id) })
+                }
+            } else {
+                ThoughtProcessCard(thoughtSteps = message.thoughtSteps, isThinking = message.isThinking)
                 message.toolCalls.forEach { tool ->
-                    ToolExecutionCard(
-                        tool = tool.copy(isExpanded = tool.isExpanded),
-                        onToggleExpand = { onToggleToolExpand(tool.id) }
-                    )
+                    ToolExecutionCard(tool = tool, onToggleExpand = { onToggleToolExpand(tool.id) })
                 }
             }
             if (message.text.isNotBlank()) {
@@ -239,10 +270,43 @@ fun ChatMessageItem(
                     onPlayPreview = onPlayPreview,
                     onOpenInWorkspace = onOpenInWorkspace
                 )
-            } else if (message.isThinking && message.toolCalls.isEmpty()) {
-                Text("Pensando…", fontSize = 13.sp, color = TextMuted)
+            } else if (message.isThinking && message.steps.isEmpty() && message.toolCalls.isEmpty()) {
+                StatusLine(text = "Pensando…", isLive = true)
+            }
+            if (!message.isThinking) {
+                message.metrics?.let { metrics ->
+                    if (metrics.commandsExecuted > 0 || metrics.filesCreated + metrics.filesModified > 0) {
+                        RunSummaryBar(metrics = metrics)
+                    }
+                }
             }
         }
+    }
+}
+
+/** Texto curto da atividade atual do agente para a barra superior. */
+private fun describeActivity(message: ChatMessage): String {
+    val running = message.toolCalls.lastOrNull { it.status == ExecutionStatus.RUNNING }
+    if (running != null) {
+        val target = running.target.ifBlank { running.detail }
+        return when (running.type) {
+            ToolType.READ_FILE, ToolType.READ_FILE_LINES -> "Lendo $target"
+            ToolType.WRITE_FILE -> "Gravando $target"
+            ToolType.EDIT_FILE, ToolType.PATCH_LINES -> "Editando $target"
+            ToolType.SEARCH_FILES, ToolType.FIND_SYMBOL -> "Buscando ${running.detail}"
+            ToolType.LIST_FILES -> "Listando arquivos"
+            ToolType.DELETE_FILE -> "Removendo $target"
+            ToolType.VERIFY_SYNTAX -> "Verificando sintaxe de $target"
+            ToolType.RUN_COMMAND -> "Executando ${running.detail.removePrefix("cmd=")}"
+            else -> running.title
+        }
+    }
+    val live = message.steps.lastOrNull { it.isLive } ?: return "Pensando…"
+    return when (live.kind) {
+        StepKind.REASONING -> "Pensando…"
+        StepKind.NARRATION -> "Escrevendo resposta…"
+        StepKind.STATUS -> live.text
+        StepKind.TOOL -> "Executando ferramenta…"
     }
 }
 

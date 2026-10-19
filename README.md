@@ -17,6 +17,16 @@ App **Android** (Kotlin + Jetpack Compose) com agente autônomo de engenharia de
 | Comandos do terminal: `pwd`, `ls`, `cat`, `grep`, `find`, `head`, `tail`, `wc`, `tree` | ✅ |
 | Auto-Update via GitHub Releases (`HROSONE/Dev`) | ✅ |
 
+## Como o agente trabalha (estilo Claude Code)
+
+- **Streaming real** em todos os provedores (Gemini `streamGenerateContent`, OpenRouter e Qwen/llama-server via SSE): o pensamento do modelo (thought summaries, `reasoning`, `<think>`) e o texto aparecem token a token no chat.
+- **Linha do tempo ao vivo** em cada resposta: pensamento → narração ("Vou ler…") → cards `Read(…)`, `Edit(…)`, `Create(…)` com spinner enquanto rodam, e "Preparando write_file → index.html · 2.3k caracteres" enquanto o modelo ainda escreve a chamada.
+- **Um único loop agêntico** para qualquer pedido: o modelo decide se lê, edita ou só responde. Leitura é sempre permitida; escrita só no modo Build.
+- **Erros não abortam a tarefa**: arquivo inexistente, `old_text` não encontrado, recusa do usuário ou bloqueio de política voltam ao modelo como `<tool_result status="erro">` para ele se corrigir.
+- **Eficiência com arquivos**: o contexto inicial traz a árvore + mapa de símbolos do workspace (e o conteúdo, se for pequeno); o prompt prioriza editar arquivos existentes; sobrescrever um arquivo sem lê-lo gera aviso ao modelo.
+- **Diff real** (antes/depois) em cada escrita, com selo NOVO/EDITADO e `+N −M`, e um resumo por resposta: arquivos novos vs. editados, lidos, linhas, rodadas e barra de "reuso de arquivos".
+- Conversa multi-turn de verdade, histórico compactado, retry automático em 429/5xx, botão Parar cancela a requisição HTTP na hora.
+
 ## Testes
 
 ```bash

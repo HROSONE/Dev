@@ -160,4 +160,27 @@ class AgentToolRequestParserTest {
         val request = """{"tool":"write_file","path":"notes.txt","content":"$tooLarge"}"""
         assertNull(AgentToolRequestParser.parse(request))
     }
+
+    @Test
+    fun toleratesRawNewlinesNumericStringsAndAliases() {
+        val raw = "{\"tool\":\"write_file\",\"path\":\"a.txt\",\"content\":\"linha1\nlinha2\"}"
+        assertEquals(AgentToolRequest.WriteFile("a.txt", "linha1\nlinha2"), AgentToolRequestParser.parse(raw))
+        assertEquals(
+            AgentToolRequest.ReadFileLines("a.kt", 3, 9),
+            AgentToolRequestParser.parse("""{"tool":"read_file_lines","path":"a.kt","start_line":"3","end_line":"9"}""")
+        )
+        assertEquals(
+            AgentToolRequest.EditFile("a.kt", "x", "y", false),
+            AgentToolRequestParser.parse("""{"tool":"edit_file","args":{"file_path":"a.kt","old_string":"x","new_string":"y"}}""")
+        )
+    }
+
+    @Test
+    fun visibleProseHidesToolJsonIncludingPartialStream() {
+        val complete = "Vou criar o arquivo.\n```json\n{\"tool\":\"write_file\",\"path\":\"a.txt\",\"content\":\"oi\"}\n```"
+        assertEquals("Vou criar o arquivo.", AgentToolRequestParser.visibleProse(complete))
+        val partial = "Vou criar o arquivo.\n```json\n{\"tool\":\"write_file\",\"path\":\"index.html\",\"content\":\"<html>"
+        assertEquals("Vou criar o arquivo.", AgentToolRequestParser.visibleProse(partial))
+        assertEquals("write_file → index.html · 6 caracteres", AgentToolRequestParser.describePendingTool(partial))
+    }
 }

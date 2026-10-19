@@ -19,13 +19,26 @@ class ToolExecutionPolicyTest {
     }
 
     @Test
-    fun ambiguousIntentCannotTriggerTools() {
+    fun readOnlyToolsAreAllowedForAmbiguousIntent() {
+        assertEquals(
+            ToolPolicyDecision.ALLOW,
+            ToolExecutionPolicy.evaluate(
+                mode = AgentMode.BUILD,
+                intent = ChatIntent.AMBIGUOUS,
+                risk = ToolRisk.READ_ONLY
+            )
+        )
+    }
+
+    @Test
+    fun ambiguousIntentCannotMutate() {
         assertEquals(
             ToolPolicyDecision.DENY,
             ToolExecutionPolicy.evaluate(
                 mode = AgentMode.BUILD,
                 intent = ChatIntent.AMBIGUOUS,
-                risk = ToolRisk.READ_ONLY
+                risk = ToolRisk.MUTATING,
+                userConfirmedMutation = true
             )
         )
     }
