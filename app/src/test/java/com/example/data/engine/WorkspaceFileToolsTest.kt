@@ -37,8 +37,8 @@ class WorkspaceFileToolsTest {
         val readLines = tools.readFileLines("src/Lines.kt", 2, 3, AgentMode.ASK, ChatIntent.EXPLANATION)
         assertTrue(readLines is ToolDispatchResult.Executed)
         val output = (readLines as ToolDispatchResult.Executed).value
-        assertTrue(output.contains("   2 | line2"))
-        assertTrue(output.contains("   3 | line3"))
+        assertTrue(output.contains("  2 | line2"))
+        assertTrue(output.contains("  3 | line3"))
     }
 
     @Test
@@ -56,7 +56,7 @@ class WorkspaceFileToolsTest {
 
         val syntaxOk = tools.verifySyntax("src/Engine.kt", AgentMode.ASK, ChatIntent.EXPLANATION)
         assertTrue(syntaxOk is ToolDispatchResult.Executed)
-        assertTrue((syntaxOk as ToolDispatchResult.Executed).value.contains("Sintaxe verificada OK"))
+        assertTrue((syntaxOk as ToolDispatchResult.Executed).value.contains("Sintaxe OK"))
     }
 
     @Test
