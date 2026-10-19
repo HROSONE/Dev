@@ -8,11 +8,29 @@ sealed class AgentLoopResult {
     data class Failed(val message: String, val toolCalls: Int) : AgentLoopResult()
 }
 
+/** Eventos emitidos durante o loop de ferramentas (UI / métricas). */
+sealed class ToolLoopEvent {
+    data class Started(
+        val toolName: String,
+        val detail: String,
+        var toolCallId: String? = null
+    ) : ToolLoopEvent()
+
+    data class Completed(
+        val toolName: String,
+        val detail: String,
+        val output: String,
+        val success: Boolean,
+        val durationMs: Long,
+        val toolCallId: String? = null
+    ) : ToolLoopEvent()
+}
+
 /**
- * Motor de orquestração SWE-Agent de alta performance:
- * - Suporta até maxToolCalls passos encadeados e execução de múltiplas ferramentas num único turno (batching)
- * - Roda verificação automática de sintaxe (SyntaxVerifier) após cada mutação de código
- * - Compacta resultados antigos de ferramentas (Sliding Window Compaction) para preservar atenção do LLM
+ * Motor de orquestração SWE-Agent:
+ * - Até maxToolCalls passos encadeados
+ * - SyntaxGuard após mutações
+ * - Compactação de histórico de tools
  */
 class AgentToolLoop(
     private val coordinator: AgentToolCoordinator,
