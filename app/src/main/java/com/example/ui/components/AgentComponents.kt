@@ -4,6 +4,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -17,6 +19,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -149,14 +152,15 @@ fun AgentModeSelector(
     }
 }
 
-/** Indicador ao vivo enquanto o agente pensa. */
+/** Indicador ao vivo enquanto o agente trabalha: mostra a atividade atual, tempo e ferramentas. */
 @Composable
 fun LiveStatusIndicator(
     isThinking: Boolean,
     thinkingSeconds: Double,
     activeRepo: String,
     commandsExecuted: Int,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    activity: String = ""
 ) {
     if (!isThinking) return
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
@@ -165,198 +169,281 @@ fun LiveStatusIndicator(
         infiniteRepeatable(tween(700, easing = LinearEasing), RepeatMode.Reverse),
         label = "alpha"
     )
-    Row(
+    Column(modifier = modifier.fillMaxWidth().background(AccentCyan.copy(alpha = 0.08f))) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(Modifier.size(8.dp).clip(CircleShape).background(AccentCyan.copy(alpha = alpha)))
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    activity.ifBlank { "Pensando…" },
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = AccentCyan,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    buildString {
+                        append(String.format(java.util.Locale.US, "%.1fs", thinkingSeconds))
+                        if (commandsExecuted > 0) append(" · $commandsExecuted ferramentas")
+                        if (activeRepo.isNotBlank()) append(" · $activeRepo")
+                    },
+                    fontSize = 11.sp,
+                    color = TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        LinearProgressIndicator(
+            modifier = Modifier.fillMaxWidth().height(2.dp),
+            color = AccentCyan,
+            trackColor = Color.Transparent
+        )
+    }
+}
+
+/** Ponto pulsante usado em itens ao vivo. */
+@Composable
+private fun LiveDot(color: Color = AccentCyan, size: Int = 7) {
+    val pulse = rememberInfiniteTransition(label = "dot")
+    val a by pulse.animateFloat(
+        0.3f, 1f,
+        infiniteRepeatable(tween(600, easing = LinearEasing), RepeatMode.Reverse),
+        label = "dotAlpha"
+    )
+    Box(Modifier.size(size.dp).clip(CircleShape).background(color.copy(alpha = a)))
+}
+
+/**
+ * Pensamento do modelo transmitido ao vivo (token a token). Enquanto está ao vivo fica aberto e
+ * mostra as últimas linhas; ao terminar recolhe para um resumo clicável.
+ */
+@Composable
+fun LiveReasoningBlock(
+    text: String,
+    isLive: Boolean,
+    modifier: Modifier = Modifier
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val showBody = isLive || expanded
+    Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(AccentCyan.copy(alpha = 0.08f))
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .clip(RoundedCornerShape(10.dp))
+            .background(AccentPurple.copy(alpha = 0.07f))
+            .clickable(enabled = !isLive) { expanded = !expanded }
+            .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
-        Box(Modifier.size(8.dp).clip(CircleShape).background(AccentCyan.copy(alpha = alpha)))
-        Spacer(Modifier.width(10.dp))
-        Column(modifier = Modifier.weight(1f)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (isLive) {
+                LiveDot(AccentPurple)
+                Spacer(Modifier.width(8.dp))
+            } else {
+                Icon(Icons.Default.Psychology, null, tint = AccentPurple, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(6.dp))
+            }
             Text(
-                "Pensando…",
-                fontSize = 13.sp,
+                if (isLive) "Pensando…" else "Pensamento · ${text.length} caracteres",
+                fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = AccentCyan
+                color = AccentPurple
             )
+            Spacer(Modifier.weight(1f))
+            if (!isLive) {
+                Icon(
+                    if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "Recolher" else "Expandir",
+                    tint = TextMuted,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+        AnimatedVisibility(visible = showBody) {
+            val body = if (isLive) text.lines().takeLast(10).joinToString("\n") else text
             Text(
-                buildString {
-                    append(String.format("%.1fs", thinkingSeconds))
-                    if (commandsExecuted > 0) append(" · $commandsExecuted ferramentas")
-                    if (activeRepo.isNotBlank()) append(" · $activeRepo")
-                },
-                fontSize = 11.sp,
+                body + if (isLive) " ▍" else "",
+                modifier = Modifier.padding(top = 6.dp),
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+                fontStyle = FontStyle.Italic,
                 color = TextSecondary
             )
         }
     }
 }
 
-/** Raciocínio ao vivo: expandido enquanto pensa. */
+/** Texto que o agente escreve entre ferramentas ("Vou ler…"), estilo Claude Code. */
+@Composable
+fun NarrationBlock(text: String, isLive: Boolean, modifier: Modifier = Modifier) {
+    Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        Text("●", fontSize = 11.sp, color = TextPrimary, modifier = Modifier.padding(top = 2.dp, end = 8.dp))
+        Text(
+            text + if (isLive) " ▍" else "",
+            fontSize = 14.sp,
+            lineHeight = 20.sp,
+            color = TextPrimary
+        )
+    }
+}
+
+/** Linha de status do harness. */
+@Composable
+fun StatusLine(text: String, isLive: Boolean, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier.fillMaxWidth().padding(vertical = 1.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (isLive) {
+            LiveDot(AccentCyan, size = 6)
+        } else {
+            Box(Modifier.size(6.dp).clip(CircleShape).background(TextMuted.copy(alpha = 0.6f)))
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text,
+            fontSize = 12.sp,
+            color = if (isLive) AccentCyan else TextMuted,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+/** Raciocínio legado (mensagens salvas antes da linha do tempo). */
 @Composable
 fun ThoughtProcessCard(
     thoughtSteps: List<String>,
     isThinking: Boolean,
     modifier: Modifier = Modifier
 ) {
-    val steps = if (thoughtSteps.isEmpty() && isThinking) {
-        listOf("Analisando sua mensagem…")
-    } else {
-        thoughtSteps
-    }
-    if (steps.isEmpty()) return
-
-    var expanded by remember(isThinking) { mutableStateOf(true) }
-    LaunchedEffect(isThinking) {
-        if (isThinking) expanded = true
-    }
-
+    if (thoughtSteps.isEmpty()) return
+    var expanded by remember { mutableStateOf(isThinking) }
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(DarkSurface.copy(alpha = 0.85f))
+            .clickable { expanded = !expanded }
             .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { expanded = !expanded },
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            if (isThinking) {
-                val pulse = rememberInfiniteTransition(label = "think")
-                val a by pulse.animateFloat(
-                    0.4f, 1f,
-                    infiniteRepeatable(tween(650, easing = LinearEasing), RepeatMode.Reverse),
-                    label = "a"
-                )
-                Box(
-                    Modifier
-                        .size(7.dp)
-                        .clip(CircleShape)
-                        .background(AccentCyan.copy(alpha = a))
-                )
-                Spacer(Modifier.width(8.dp))
-            }
-            Text(
-                if (isThinking) "Raciocínio em tempo real" else "Raciocínio (${steps.size})",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = if (isThinking) AccentCyan else TextSecondary
-            )
-            Spacer(Modifier.weight(1f))
-            Icon(
-                if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                contentDescription = if (expanded) "Recolher" else "Expandir",
-                tint = TextMuted,
-                modifier = Modifier.size(18.dp)
-            )
-        }
+        Text("Raciocínio (${thoughtSteps.size})", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextSecondary)
         AnimatedVisibility(visible = expanded) {
-            Column(
-                modifier = Modifier.padding(top = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                steps.forEachIndexed { index, step ->
-                    val isLatest = index == steps.lastIndex && isThinking
-                    Row(verticalAlignment = Alignment.Top) {
-                        Text(
-                            "→",
-                            fontSize = 12.sp,
-                            color = if (isLatest) AccentCyan else TextMuted,
-                            modifier = Modifier.padding(end = 6.dp, top = 1.dp)
-                        )
-                        Text(
-                            step,
-                            fontSize = 13.sp,
-                            color = if (isLatest) TextPrimary else TextSecondary,
-                            lineHeight = 18.sp,
-                            fontWeight = if (isLatest) FontWeight.Medium else FontWeight.Normal
-                        )
-                    }
+            Column(Modifier.padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                thoughtSteps.forEach { step ->
+                    Text("→ $step", fontSize = 12.sp, color = TextSecondary, lineHeight = 17.sp)
                 }
             }
         }
     }
 }
 
-/** Tool card compacto, exibe diff colorido quando expandido. */
+private data class ToolLabel(val verb: String, val argument: String)
+
+private fun toolLabel(tool: ToolCallInfo): ToolLabel {
+    val target = tool.target.ifBlank {
+        tool.detail.removePrefix("path=").substringBefore(" (").substringBefore(":").trim()
+    }
+    return when (tool.type) {
+        ToolType.READ_FILE -> ToolLabel("Read", target)
+        ToolType.READ_FILE_LINES -> ToolLabel("Read", tool.detail)
+        ToolType.LIST_FILES -> ToolLabel("List", target.ifBlank { "." })
+        ToolType.SEARCH_FILES -> ToolLabel("Search", tool.detail.removePrefix("query="))
+        ToolType.FIND_SYMBOL -> ToolLabel("Symbol", tool.detail.removePrefix("symbol="))
+        ToolType.WRITE_FILE -> ToolLabel(
+            if (tool.fileChange?.kind == FileChangeKind.MODIFIED) "Write" else "Create",
+            target
+        )
+        ToolType.EDIT_FILE -> ToolLabel("Edit", target)
+        ToolType.PATCH_LINES -> ToolLabel("Edit", tool.detail)
+        ToolType.DELETE_FILE -> ToolLabel("Delete", target)
+        ToolType.VERIFY_SYNTAX -> ToolLabel("Check", target)
+        ToolType.RUN_COMMAND -> ToolLabel("Bash", tool.detail.removePrefix("cmd="))
+        ToolType.READ_GITHUB_REPO -> ToolLabel("GitHub", tool.detail)
+        ToolType.COMMIT_GITHUB -> ToolLabel("Commit", tool.detail)
+    }
+}
+
+/** Card de ferramenta estilo Claude Code: `Verbo(alvo)`, selo NOVO/EDITADO, +/− linhas e diff. */
 @Composable
 fun ToolExecutionCard(
     tool: ToolCallInfo,
     onToggleExpand: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val label = remember(tool.type, tool.target, tool.detail, tool.fileChange) { toolLabel(tool) }
+    val statusColor = when (tool.status) {
+        ExecutionStatus.RUNNING -> AccentCyan
+        ExecutionStatus.SUCCESS -> AccentGreen
+        ExecutionStatus.FAILED -> AccentRed
+        ExecutionStatus.AWAITING_CONFIRMATION -> AccentYellow
+        ExecutionStatus.PENDING -> TextMuted
+    }
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 2.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(DarkSurface.copy(alpha = 0.6f))
             .clickable { onToggleExpand() }
             .padding(horizontal = 10.dp, vertical = 8.dp)
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            val statusColor = when (tool.status) {
-                ExecutionStatus.RUNNING -> AccentCyan
-                ExecutionStatus.SUCCESS -> AccentGreen
-                ExecutionStatus.FAILED -> AccentRed
-                ExecutionStatus.AWAITING_CONFIRMATION -> AccentYellow
-                ExecutionStatus.PENDING -> TextMuted
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            if (tool.status == ExecutionStatus.RUNNING) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(10.dp),
+                    strokeWidth = 1.5.dp,
+                    color = AccentCyan
+                )
+            } else {
+                Box(Modifier.size(7.dp).clip(CircleShape).background(statusColor))
             }
-            Box(
-                Modifier
-                    .size(6.dp)
-                    .clip(CircleShape)
-                    .background(statusColor)
-            )
             Spacer(Modifier.width(8.dp))
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.weight(1f)
-            ) {
-                Icon(
-                    Icons.Default.Code,
-                    contentDescription = null,
-                    tint = TextMuted,
-                    modifier = Modifier.size(14.dp)
-                )
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    tool.type.displayName,
-                    fontSize = 12.sp,
-                    fontFamily = FontFamily.Monospace,
-                    color = TextSecondary
-                )
-                if (tool.detail.isNotBlank()) {
-                    Text(
-                        "  ${tool.detail}",
-                        fontSize = 12.sp,
-                        color = TextMuted,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
+            Text(
+                label.verb,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                color = TextPrimary
+            )
+            Text(
+                "(${label.argument})",
+                fontSize = 12.sp,
+                fontFamily = FontFamily.Monospace,
+                color = TextSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).padding(end = 6.dp)
+            )
+            tool.fileChange?.let { change ->
+                FileChangeBadge(change)
+                Spacer(Modifier.width(6.dp))
             }
             if (tool.durationMs > 0) {
-                Text("${tool.durationMs}ms", fontSize = 10.sp, color = TextMuted)
+                Text(formatDuration(tool.durationMs), fontSize = 10.sp, color = TextMuted)
             }
+        }
+        if (tool.status == ExecutionStatus.FAILED && !tool.isExpanded && tool.output.isNotBlank()) {
+            Text(
+                "⎿ " + tool.output.lineSequence().firstOrNull().orEmpty(),
+                fontSize = 11.sp,
+                color = AccentRed.copy(alpha = 0.9f),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 4.dp, start = 15.dp)
+            )
         }
         AnimatedVisibility(visible = tool.isExpanded) {
             Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 if (tool.diffLines.isNotEmpty()) {
                     DiffView(lines = tool.diffLines)
-                }
-                if (tool.output.isNotBlank()) {
-                    if (tool.diffLines.isNotEmpty()) Spacer(Modifier.height(6.dp))
-                    TerminalConsoleBox(text = tool.output)
+                } else if (tool.output.isNotBlank()) {
+                    TerminalConsoleBox(
+                        text = tool.output.take(4_000),
+                        textColor = if (tool.status == ExecutionStatus.FAILED) DiffRemovedText else DiffAddedText
+                    )
                 }
             }
         }
@@ -364,19 +451,124 @@ fun ToolExecutionCard(
 }
 
 @Composable
-fun TerminalConsoleBox(text: String, modifier: Modifier = Modifier) {
+fun FileChangeBadge(change: FileChangeInfo, modifier: Modifier = Modifier) {
+    val color = when (change.kind) {
+        FileChangeKind.CREATED -> AccentGreen
+        FileChangeKind.MODIFIED -> AccentBlue
+        FileChangeKind.DELETED -> AccentRed
+    }
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier
+                .clip(RoundedCornerShape(4.dp))
+                .background(color.copy(alpha = 0.18f))
+                .padding(horizontal = 5.dp, vertical = 1.dp)
+        ) {
+            Text(change.kind.label, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = color)
+        }
+        if (change.kind != FileChangeKind.DELETED) {
+            Spacer(Modifier.width(5.dp))
+            Text("+${change.linesAdded}", fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = DiffAddedText)
+            if (change.linesRemoved > 0) {
+                Text(" −${change.linesRemoved}", fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = DiffRemovedText)
+            }
+        }
+    }
+}
+
+/**
+ * Resumo de eficiência da execução: quantos arquivos foram criados vs. reaproveitados (editados),
+ * quantos foram lidos, linhas alteradas, rodadas do modelo e tempo.
+ */
+@Composable
+fun RunSummaryBar(metrics: AgentMetrics, modifier: Modifier = Modifier) {
+    val touched = metrics.filesCreated + metrics.filesModified
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(DarkSurface.copy(alpha = 0.5f))
+            .padding(horizontal = 10.dp, vertical = 7.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (metrics.filesCreated > 0) SummaryChip("${metrics.filesCreated} novo(s)", AccentGreen)
+            if (metrics.filesModified > 0) SummaryChip("${metrics.filesModified} editado(s)", AccentBlue)
+            if (metrics.filesRead > 0) SummaryChip("${metrics.filesRead} lido(s)", TextSecondary)
+            if (metrics.linesAdded + metrics.linesRemoved > 0) {
+                SummaryChip("+${metrics.linesAdded} −${metrics.linesRemoved}", AccentYellow)
+            }
+            if (metrics.failedTools > 0) SummaryChip("${metrics.failedTools} falha(s)", AccentRed)
+            Text(
+                buildString {
+                    append(String.format(java.util.Locale.US, "%.1fs", metrics.thinkingSeconds))
+                    if (metrics.commandsExecuted > 0) append(" · ${metrics.commandsExecuted} ferramentas")
+                    if (metrics.modelRounds > 0) append(" · ${metrics.modelRounds} rodada(s)")
+                },
+                fontSize = 10.sp,
+                color = TextMuted
+            )
+        }
+        if (touched > 0) {
+            val reuse = metrics.filesModified.toFloat() / touched
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Reuso de arquivos", fontSize = 10.sp, color = TextMuted)
+                Spacer(Modifier.width(8.dp))
+                LinearProgressIndicator(
+                    progress = { reuse },
+                    modifier = Modifier.weight(1f).height(4.dp).clip(RoundedCornerShape(2.dp)),
+                    color = AccentBlue,
+                    trackColor = AccentGreen.copy(alpha = 0.35f)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "${metrics.filesModified}/$touched existentes",
+                    fontSize = 10.sp,
+                    color = TextSecondary
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SummaryChip(text: String, color: Color) {
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(color.copy(alpha = 0.14f))
+            .padding(horizontal = 6.dp, vertical = 2.dp)
+    ) {
+        Text(text, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = color)
+    }
+}
+
+private fun formatDuration(ms: Long): String =
+    if (ms < 1000) "${ms}ms" else String.format(java.util.Locale.US, "%.1fs", ms / 1000.0)
+
+@Composable
+fun TerminalConsoleBox(
+    text: String,
+    modifier: Modifier = Modifier,
+    textColor: Color = Color(0xFF7EE787)
+) {
     Box(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(6.dp))
             .background(Color(0xFF0D1117))
+            .horizontalScroll(rememberScrollState())
             .padding(8.dp)
     ) {
         Text(
             text,
             fontSize = 11.sp,
             fontFamily = FontFamily.Monospace,
-            color = Color(0xFF7EE787),
+            color = textColor,
             lineHeight = 15.sp
         )
     }
@@ -389,21 +581,40 @@ fun DiffView(lines: List<DiffLine>, modifier: Modifier = Modifier) {
             .fillMaxWidth()
             .clip(RoundedCornerShape(6.dp))
             .background(Color(0xFF0D1117))
-            .padding(6.dp)
+            .horizontalScroll(rememberScrollState())
+            .padding(vertical = 4.dp)
     ) {
-        lines.forEach { line ->
-            val fg = when (line.type) {
-                DiffLineType.ADDED -> Color(0xFF7EE787)
-                DiffLineType.REMOVED -> Color(0xFFFF7B72)
-                DiffLineType.HEADER -> AccentCyan
-                DiffLineType.CONTEXT -> TextSecondary
+        lines.take(300).forEach { line ->
+            val (fg, bg) = when (line.type) {
+                DiffLineType.ADDED -> DiffAddedText to DiffAddedBg
+                DiffLineType.REMOVED -> DiffRemovedText to DiffRemovedBg
+                DiffLineType.HEADER -> AccentCyan to Color.Transparent
+                DiffLineType.CONTEXT -> TextSecondary to Color.Transparent
             }
+            val number = (line.newLineNumber ?: line.oldLineNumber)?.toString().orEmpty()
+            Row(Modifier.background(bg).padding(horizontal = 6.dp)) {
+                Text(
+                    number.padStart(4),
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = TextMuted,
+                    modifier = Modifier.padding(end = 6.dp)
+                )
+                Text(
+                    line.text,
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = fg,
+                    softWrap = false
+                )
+            }
+        }
+        if (lines.size > 300) {
             Text(
-                line.text,
+                "… mais ${lines.size - 300} linhas de diff",
                 fontSize = 10.sp,
-                fontFamily = FontFamily.Monospace,
-                color = fg,
-                modifier = Modifier.padding(vertical = 1.dp)
+                color = TextMuted,
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
             )
         }
     }

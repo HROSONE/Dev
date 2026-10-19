@@ -28,6 +28,42 @@ object OpenRouterClient {
 
     fun isApiKeyConfigured(): Boolean = runtimeApiKey.isNotBlank()
 
+    suspend fun streamChat(
+        messages: List<LlmMessage>,
+        modelId: String,
+        systemInstruction: String,
+        includeReasoning: Boolean = false,
+        listener: LlmStreamListener
+    ) {
+        if (runtimeApiKey.isBlank()) {
+            throw IllegalStateException("API key da OpenRouter não configurada. Cole em Configurações.")
+        }
+        if (modelId.isBlank()) throw IllegalStateException("Modelo OpenRouter não selecionado.")
+        val payload = OpenAiCompat.payload(modelId, systemInstruction, messages, temperature = 0.3).apply {
+            if (includeReasoning) put("include_reasoning", true)
+        }
+        val request = Request.Builder()
+            .url(BASE_URL)
+            .header("Authorization", "Bearer $runtimeApiKey")
+            .header("HTTP-Referer", "https://github.com/HROSONE/Dev")
+            .header("X-Title", "DevAgent")
+            .post(payload.toString().toRequestBody("application/json".toMediaType()))
+            .build()
+        SseClient.stream(
+            client = okHttpClient,
+            request = request,
+            describeError = { code, body ->
+                val hint = when (code) {
+                    401, 403 -> " Chave OpenRouter inválida."
+                    404 -> " Modelo '$modelId' não encontrado."
+                    429 -> " Rate limit; aguarde e tente de novo."
+                    else -> ""
+                }
+                "OpenRouter HTTP $code: ${SseClient.errorMessage(body, "erro")}.$hint"
+            }
+        ) { data -> OpenAiCompat.dispatchChunk(data, "OpenRouter", listener) }
+    }
+
     suspend fun chat(
         prompt: String,
         modelId: String,

@@ -130,6 +130,15 @@ class ChatHistoryStore(context: Context) {
                     put("durationMs", tc.durationMs)
                     put("output", tc.output)
                     put("isExpanded", tc.isExpanded)
+                    put("target", tc.target)
+                    tc.fileChange?.let { fc ->
+                        put("fileChange", JSONObject().apply {
+                            put("path", fc.path)
+                            put("kind", fc.kind.name)
+                            put("added", fc.linesAdded)
+                            put("removed", fc.linesRemoved)
+                        })
+                    }
                     put("diffLines", JSONArray().apply {
                         tc.diffLines.forEach { dl ->
                             put(JSONObject().apply {
@@ -150,8 +159,25 @@ class ChatHistoryStore(context: Context) {
                 put("filesInspected", m.filesInspected)
                 put("linesChanged", m.linesChanged)
                 put("sandboxLatencyMs", m.sandboxLatencyMs)
+                put("filesCreated", m.filesCreated)
+                put("filesModified", m.filesModified)
+                put("filesRead", m.filesRead)
+                put("linesAdded", m.linesAdded)
+                put("linesRemoved", m.linesRemoved)
+                put("modelRounds", m.modelRounds)
+                put("failedTools", m.failedTools)
             })
         }
+        put("steps", JSONArray().apply {
+            msg.steps.forEach { step ->
+                put(JSONObject().apply {
+                    put("id", step.id)
+                    put("kind", step.kind.name)
+                    put("text", step.text)
+                    step.toolCallId?.let { put("toolCallId", it) }
+                })
+            }
+        })
     }
 
     private fun deserializeMessage(json: JSONObject): ChatMessage {
@@ -178,11 +204,23 @@ class ChatHistoryStore(context: Context) {
                 type = runCatching { ToolType.valueOf(t.optString("type")) }.getOrDefault(ToolType.READ_FILE),
                 title = t.optString("title"),
                 detail = t.optString("detail"),
-                status = runCatching { ExecutionStatus.valueOf(t.optString("status")) }.getOrDefault(ExecutionStatus.SUCCESS),
+                status = runCatching { ExecutionStatus.valueOf(t.optString("status")) }
+                    .getOrDefault(ExecutionStatus.SUCCESS)
+                    .let { if (it == ExecutionStatus.RUNNING || it == ExecutionStatus.PENDING) ExecutionStatus.FAILED else it },
                 durationMs = t.optLong("durationMs"),
                 output = t.optString("output"),
                 diffLines = diffs,
-                isExpanded = t.optBoolean("isExpanded", false)
+                isExpanded = t.optBoolean("isExpanded", false),
+                target = t.optString("target", ""),
+                fileChange = t.optJSONObject("fileChange")?.let { fc ->
+                    FileChangeInfo(
+                        path = fc.optString("path"),
+                        kind = runCatching { FileChangeKind.valueOf(fc.optString("kind")) }
+                            .getOrDefault(FileChangeKind.MODIFIED),
+                        linesAdded = fc.optInt("added"),
+                        linesRemoved = fc.optInt("removed")
+                    )
+                }
             )
         }
 
@@ -193,7 +231,26 @@ class ChatHistoryStore(context: Context) {
                 commandsExecuted = it.optInt("commandsExecuted", 0),
                 filesInspected = it.optInt("filesInspected", 0),
                 linesChanged = it.optInt("linesChanged", 0),
-                sandboxLatencyMs = it.optLong("sandboxLatencyMs", 0L)
+                sandboxLatencyMs = it.optLong("sandboxLatencyMs", 0L),
+                filesCreated = it.optInt("filesCreated", 0),
+                filesModified = it.optInt("filesModified", 0),
+                filesRead = it.optInt("filesRead", 0),
+                linesAdded = it.optInt("linesAdded", 0),
+                linesRemoved = it.optInt("linesRemoved", 0),
+                modelRounds = it.optInt("modelRounds", 0),
+                failedTools = it.optInt("failedTools", 0)
+            )
+        }
+
+        val stepsJson = json.optJSONArray("steps") ?: JSONArray()
+        val timeline = (0 until stepsJson.length()).mapNotNull { idx ->
+            val st = stepsJson.optJSONObject(idx) ?: return@mapNotNull null
+            AgentStep(
+                id = st.optString("id", UUID.randomUUID().toString()),
+                kind = runCatching { StepKind.valueOf(st.optString("kind")) }.getOrDefault(StepKind.STATUS),
+                text = st.optString("text"),
+                toolCallId = if (st.has("toolCallId")) st.optString("toolCallId") else null,
+                isLive = false
             )
         }
 
@@ -208,7 +265,8 @@ class ChatHistoryStore(context: Context) {
             thinkingSeconds = json.optDouble("thinkingSeconds", 0.0),
             thoughtSteps = steps,
             toolCalls = tools,
-            metrics = metrics
+            metrics = metrics,
+            steps = timeline
         )
     }
 

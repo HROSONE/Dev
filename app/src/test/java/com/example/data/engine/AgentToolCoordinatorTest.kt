@@ -50,7 +50,7 @@ class AgentToolCoordinatorTest {
     }
 
     @Test
-    fun commandRequestIsDeniedForAmbiguousIntent() {
+    fun readOnlyCommandIsAllowedEvenForAmbiguousIntent() {
         val root = temporaryFolder.newFolder("ambiguous-workspace")
         val coordinator = AgentToolCoordinator(WorkspaceFileTools(root), WorkspaceCommandRunner(root))
         val result = coordinator.execute(
@@ -58,7 +58,7 @@ class AgentToolCoordinatorTest {
             AgentMode.ASK,
             ChatIntent.AMBIGUOUS
         )
-        assertTrue(result is AgentToolExecution.Rejected)
+        assertTrue(result is AgentToolExecution.Completed)
     }
 
     @Test

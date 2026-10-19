@@ -119,7 +119,7 @@ object QwenCoderClient {
                 "-m", modelPath,
                 "--host", "127.0.0.1",
                 "--port", "8080",
-                "-c", "4096",
+                "-c", contextSizeFor(activeVariant).toString(),
                 "-t", "4",
                 "--temp", "0.7"
             ).redirectErrorStream(true)
@@ -144,6 +144,101 @@ object QwenCoderClient {
             diagnostics += "falha ao iniciar motor: ${e.message}"
             return false
         }
+    }
+
+    /** Janela de contexto do motor local: modelos menores aguentam mais tokens na RAM do celular. */
+    fun contextSizeFor(variant: QwenModelVariant): Int = when (variant) {
+        QwenModelVariant.QWEN_0_5B, QwenModelVariant.QWEN_1_5B -> 8192
+        QwenModelVariant.QWEN_3B -> 6144
+        QwenModelVariant.QWEN_7B -> 4096
+    }
+
+    /**
+     * Streaming com a mesma cadeia de fallback de [chat]: motor local → OpenRouter → HF → Gemini.
+     * Só troca de provedor se o anterior falhar antes de emitir qualquer token.
+     */
+    suspend fun streamChat(
+        messages: List<LlmMessage>,
+        systemInstruction: String,
+        listener: LlmStreamListener
+    ) {
+        val diagnostics = mutableListOf<String>()
+        val system = systemInstruction.ifBlank { DEFAULT_CHAT_SYSTEM }
+
+        suspend fun attempt(label: String, block: suspend (LlmStreamListener) -> Unit): Boolean {
+            val tracker = object : LlmStreamListener {
+                @Volatile var emitted = false
+                override fun onReasoning(delta: String) { emitted = true; listener.onReasoning(delta) }
+                override fun onText(delta: String) { emitted = true; listener.onText(delta) }
+            }
+            return try {
+                block(tracker)
+                true
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (tracker.emitted) throw e
+                diagnostics += "$label: ${e.message}"
+                false
+            }
+        }
+
+        if (hasLocalModel()) {
+            val started = withContext(Dispatchers.IO) { startNativeEngineIfAvailable(diagnostics) }
+            if (started) {
+                val endpoint = localEndpointUrl.trim().ifBlank { DEFAULT_LOCAL_ENDPOINT }
+                val ok = attempt("Local") { l ->
+                    val payload = OpenAiCompat.payload(
+                        model = activeVariant.fileName,
+                        systemInstruction = system,
+                        messages = messages,
+                        temperature = 0.4,
+                        maxTokens = 3072
+                    )
+                    val req = Request.Builder()
+                        .url(endpoint)
+                        .post(payload.toString().toRequestBody("application/json".toMediaType()))
+                        .build()
+                    SseClient.stream(localHttp, req, { code, body -> "Local HTTP $code: ${body.take(200)}" }) {
+                        OpenAiCompat.dispatchChunk(it, "Qwen local", l)
+                    }
+                }
+                if (ok) return
+            }
+        } else {
+            diagnostics += "sem GGUF local"
+        }
+
+        if (OpenRouterClient.isApiKeyConfigured()) {
+            val preferred = LlmGateway.openRouterModelId.ifBlank { OPENROUTER_QWEN_FREE }
+            val modelId = if (preferred.contains("qwen", ignoreCase = true)) preferred else OPENROUTER_QWEN_FREE
+            if (attempt("OpenRouter") { l -> OpenRouterClient.streamChat(messages, modelId, system, listener = l) }) return
+        }
+
+        if (hfApiKey.isNotBlank()) {
+            val ok = attempt("HF") { l ->
+                val payload = OpenAiCompat.payload(activeVariant.hfModelId, system, messages, 0.4, maxTokens = 3072)
+                val req = Request.Builder()
+                    .url("$HF_ROUTER_URL${activeVariant.hfModelId}/v1/chat/completions")
+                    .header("Authorization", "Bearer ${hfApiKey.trim()}")
+                    .post(payload.toString().toRequestBody("application/json".toMediaType()))
+                    .build()
+                SseClient.stream(cloudHttp, req, { code, _ -> "HF HTTP $code" }) {
+                    OpenAiCompat.dispatchChunk(it, "HF", l)
+                }
+            }
+            if (ok) return
+        }
+
+        if (GeminiClient.isApiKeyConfigured()) {
+            GeminiClient.streamChat(messages, system, listener = listener)
+            return
+        }
+
+        throw IllegalStateException(
+            "Qwen não respondeu (${diagnostics.joinToString(" · ")}). " +
+                "Se o modelo local travar, use um GGUF menor (0.5B/1.5B) ou OpenRouter free."
+        )
     }
 
     suspend fun chat(

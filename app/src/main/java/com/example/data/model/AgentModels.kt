@@ -127,16 +127,32 @@ enum class DiffLineType {
     CONTEXT, ADDED, REMOVED, HEADER
 }
 
+enum class FileChangeKind(val label: String) {
+    CREATED("NOVO"),
+    MODIFIED("EDITADO"),
+    DELETED("REMOVIDO")
+}
+
+/** Efeito real de uma ferramenta de escrita no workspace (calculado comparando antes/depois). */
+data class FileChangeInfo(
+    val path: String,
+    val kind: FileChangeKind,
+    val linesAdded: Int,
+    val linesRemoved: Int
+)
+
 data class ToolCallInfo(
     val id: String,
     val type: ToolType,
     val title: String,
     val detail: String,
-    var status: ExecutionStatus = ExecutionStatus.PENDING,
-    var durationMs: Long = 0,
-    var output: String = "",
-    var diffLines: List<DiffLine> = emptyList(),
-    var isExpanded: Boolean = false
+    val status: ExecutionStatus = ExecutionStatus.PENDING,
+    val durationMs: Long = 0,
+    val output: String = "",
+    val diffLines: List<DiffLine> = emptyList(),
+    val isExpanded: Boolean = false,
+    val target: String = "",
+    val fileChange: FileChangeInfo? = null
 )
 
 data class AgentMetrics(
@@ -144,7 +160,34 @@ data class AgentMetrics(
     val commandsExecuted: Int = 0,
     val filesInspected: Int = 0,
     val linesChanged: Int = 0,
-    val sandboxLatencyMs: Long = 0
+    val sandboxLatencyMs: Long = 0,
+    val filesCreated: Int = 0,
+    val filesModified: Int = 0,
+    val filesRead: Int = 0,
+    val linesAdded: Int = 0,
+    val linesRemoved: Int = 0,
+    val modelRounds: Int = 0,
+    val failedTools: Int = 0
+)
+
+enum class StepKind {
+    /** Linha curta de status do harness (ex.: "Consultando o modelo…"). */
+    STATUS,
+    /** Pensamento do modelo, transmitido token a token. */
+    REASONING,
+    /** Texto que o modelo escreve entre chamadas de ferramenta ("Vou ler o arquivo X…"). */
+    NARRATION,
+    /** Referência a um [ToolCallInfo] da mensagem. */
+    TOOL
+}
+
+/** Item da linha do tempo de uma resposta do agente, na ordem em que aconteceu. */
+data class AgentStep(
+    val id: String,
+    val kind: StepKind,
+    val text: String = "",
+    val toolCallId: String? = null,
+    val isLive: Boolean = false
 )
 
 enum class MessageRole {
@@ -162,7 +205,8 @@ data class ChatMessage(
     val thinkingSeconds: Double = 0.0,
     val thoughtSteps: List<String> = emptyList(),
     val toolCalls: List<ToolCallInfo> = emptyList(),
-    val metrics: AgentMetrics? = null
+    val metrics: AgentMetrics? = null,
+    val steps: List<AgentStep> = emptyList()
 )
 
 data class RepoFile(

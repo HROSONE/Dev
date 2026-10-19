@@ -30,13 +30,9 @@ object ToolExecutionPolicy {
     ): ToolPolicyDecision {
         if (risk == ToolRisk.UNKNOWN) return ToolPolicyDecision.DENY
 
-        if (risk == ToolRisk.READ_ONLY) {
-            return if (intent == ChatIntent.AMBIGUOUS) {
-                ToolPolicyDecision.DENY
-            } else {
-                ToolPolicyDecision.ALLOW
-            }
-        }
+        // Leitura dentro do workspace isolado é sempre segura: o agente precisa de contexto
+        // real (como o Claude Code) mesmo em perguntas ou mensagens ambíguas.
+        if (risk == ToolRisk.READ_ONLY) return ToolPolicyDecision.ALLOW
 
         // Mutations need all three: BUILD mode, an explicit implementation request,
         // and a separate confirmation. Classifier output alone must never authorize it.

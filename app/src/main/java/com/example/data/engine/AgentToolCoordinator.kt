@@ -28,6 +28,8 @@ class AgentToolCoordinator(
     fun verifyFileSyntax(relativePath: String): SyntaxCheckResult? =
         workspaceTools.verifySyntaxDirect(relativePath)
 
+    fun snapshot(relativePath: String): String? = workspaceTools.readRawOrNull(relativePath)
+
     fun execute(
         modelResponse: String,
         mode: AgentMode,
