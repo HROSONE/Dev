@@ -1,5 +1,12 @@
 package com.example.ui.screens
 
+import android.annotation.SuppressLint
+import android.graphics.Color as AndroidColor
+import android.view.ViewGroup
+import android.webkit.WebChromeClient
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,7 +22,9 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -32,6 +41,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.model.*
 import com.example.ui.components.*
 import com.example.ui.theme.*
@@ -101,7 +111,6 @@ fun AgentChatScreen(
             }
         }
 
-        // Barra de comando focada em engenharia de software
         Surface(
             color = DarkBackground,
             modifier = Modifier.fillMaxWidth()
@@ -273,6 +282,17 @@ private fun parseMessageSegments(rawText: String): List<MessageSegment> {
     return if (segments.isEmpty()) listOf(MessageSegment.Prose(rawText)) else segments
 }
 
+/** Detecta HTML pelo idioma da fence ou pelo conteúdo. */
+private fun isHtmlCode(language: String, code: String): Boolean {
+    val lang = language.lowercase().trim()
+    if (lang in setOf("html", "htm", "xhtml")) return true
+    val sample = code.trimStart().take(400).lowercase()
+    return sample.startsWith("<!doctype html") ||
+        sample.startsWith("<html") ||
+        (sample.contains("<html") && sample.contains("</html>")) ||
+        (sample.contains("<body") && (sample.contains("<div") || sample.contains("<p") || sample.contains("<h1")))
+}
+
 @Composable
 private fun CodeAwareMessageContent(
     rawText: String,
@@ -283,7 +303,7 @@ private fun CodeAwareMessageContent(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        segments.forEach { segment ->
+        segments.forEachIndexed { index, segment ->
             when (segment) {
                 is MessageSegment.Prose -> {
                     val cleanProse = segment.text
@@ -300,68 +320,201 @@ private fun CodeAwareMessageContent(
                     )
                 }
                 is MessageSegment.CodeBlock -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Color(0xFF0D1117))
-                            .border(1.dp, DarkBorder, RoundedCornerShape(10.dp))
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(DarkSurfaceVariant)
-                                .padding(horizontal = 10.dp, vertical = 5.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = segment.language.uppercase(),
-                                fontSize = 10.sp,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.Bold,
-                                color = AccentCyan
-                            )
-                            Row(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .clickable { onCopyText(segment.code) }
-                                    .padding(horizontal = 6.dp, vertical = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.ContentCopy,
-                                    contentDescription = "Copiar código",
-                                    tint = TextSecondary,
-                                    modifier = Modifier.size(12.dp)
-                                )
-                                Spacer(Modifier.width(4.dp))
-                                Text(
-                                    text = "Copiar",
-                                    fontSize = 10.sp,
-                                    color = TextSecondary
-                                )
-                            }
-                        }
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState())
-                                .padding(10.dp)
-                        ) {
-                            Text(
-                                text = segment.code,
-                                fontSize = 11.sp,
-                                fontFamily = FontFamily.Monospace,
-                                color = Color(0xFFE6EDF3),
-                                lineHeight = 16.sp
-                            )
-                        }
-                    }
+                    HtmlAwareCodeBlock(
+                        language = segment.language,
+                        code = segment.code,
+                        blockKey = "${index}_${segment.language}_${segment.code.hashCode()}",
+                        onCopyText = onCopyText
+                    )
                 }
             }
         }
     }
+}
+
+@Composable
+private fun HtmlAwareCodeBlock(
+    language: String,
+    code: String,
+    blockKey: String,
+    onCopyText: (String) -> Unit
+) {
+    val showPlay = remember(language, code) { isHtmlCode(language, code) }
+    var previewOpen by remember(blockKey) { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0xFF0D1117))
+            .border(1.dp, DarkBorder, RoundedCornerShape(10.dp))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(DarkSurfaceVariant)
+                .padding(horizontal = 10.dp, vertical = 5.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = language.uppercase().ifBlank { "CODE" },
+                fontSize = 10.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                color = AccentCyan
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                if (showPlay) {
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable { previewOpen = !previewOpen }
+                            .background(
+                                if (previewOpen) AccentGreen.copy(alpha = 0.2f)
+                                else Color.Transparent
+                            )
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                            .testTag("html_preview_play"),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = if (previewOpen) Icons.Default.Close else Icons.Default.PlayArrow,
+                            contentDescription = if (previewOpen) "Fechar preview" else "Preview HTML",
+                            tint = if (previewOpen) AccentGreen else AccentCyan,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(
+                            text = if (previewOpen) "Fechar" else "Play",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (previewOpen) AccentGreen else AccentCyan
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable { onCopyText(code) }
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ContentCopy,
+                        contentDescription = "Copiar código",
+                        tint = TextSecondary,
+                        modifier = Modifier.size(12.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Copiar",
+                        fontSize = 10.sp,
+                        color = TextSecondary
+                    )
+                }
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(10.dp)
+        ) {
+            Text(
+                text = code,
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                color = Color(0xFFE6EDF3),
+                lineHeight = 16.sp
+            )
+        }
+
+        if (showPlay && previewOpen) {
+            HorizontalDivider(color = DarkBorder, thickness = 1.dp)
+            Text(
+                text = "Preview",
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color = AccentGreen,
+                modifier = Modifier.padding(start = 10.dp, top = 8.dp, bottom = 4.dp)
+            )
+            HtmlPreviewWebView(
+                html = code,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(280.dp)
+                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .border(1.dp, AccentGreen.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+            )
+        }
+    }
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+private fun HtmlPreviewWebView(
+    html: String,
+    modifier: Modifier = Modifier
+) {
+    val document = remember(html) { wrapHtmlDocument(html) }
+    AndroidView(
+        modifier = modifier.background(Color.White),
+        factory = { context ->
+            WebView(context).apply {
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+                setBackgroundColor(AndroidColor.WHITE)
+                webViewClient = WebViewClient()
+                webChromeClient = WebChromeClient()
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                settings.loadWithOverviewMode = true
+                settings.useWideViewPort = true
+                settings.builtInZoomControls = true
+                settings.displayZoomControls = false
+                settings.cacheMode = WebSettings.LOAD_NO_CACHE
+                settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+            }
+        },
+        update = { webView ->
+            webView.loadDataWithBaseURL(
+                /* baseUrl = */ null,
+                /* data = */ document,
+                /* mimeType = */ "text/html",
+                /* encoding = */ "UTF-8",
+                /* historyUrl = */ null
+            )
+        }
+    )
+}
+
+/** Garante documento HTML completo para o WebView renderizar bem. */
+private fun wrapHtmlDocument(raw: String): String {
+    val trimmed = raw.trim()
+    if (trimmed.contains("<html", ignoreCase = true)) return trimmed
+    return """
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; margin: 12px; color: #111; background: #fff; }
+</style>
+</head>
+<body>
+$trimmed
+</body>
+</html>
+""".trimIndent()
 }
 
 @Composable
@@ -448,7 +601,7 @@ fun EmptyAgentState(
                 accentColor = AccentCyan,
                 onClick = { onSelectPreset(prompt) }
             )
-            Spacer(Modifier.height(6.dp))
+            Spacer(modifier.height(6.dp))
         }
     }
 }
