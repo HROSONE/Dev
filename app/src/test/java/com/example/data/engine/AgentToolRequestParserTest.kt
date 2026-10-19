@@ -50,8 +50,8 @@ class AgentToolRequestParserTest {
     @Test
     fun parsesFindSymbolRequest() {
         assertEquals(
-            AgentToolRequest.FindSymbol("DevAgentEngine", "app/src"),
-            AgentToolRequestParser.parse("""{"tool":"find_symbol","symbol":"DevAgentEngine","path":"app/src"}""")
+            AgentToolRequest.FindSymbol("DevAgentEngine"),
+            AgentToolRequestParser.parse("""{"tool":"find_symbol","query":"DevAgentEngine"}""")
         )
     }
 
