@@ -53,17 +53,20 @@ jobs:
           gradle assembleDebug \
             -PversionCode=$CODE \
             -PversionName=$NAME \
+            --no-configuration-cache \
             --stacktrace
 
       - name: Rename APK
         run: |
           mkdir -p dist
           APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+          if [ -z "$APK" ]; then
+            echo "APK não encontrado"
+            exit 1
+          fi
           cp "$APK" "dist/DevAgent-1.1.${{ github.run_number }}.apk"
           ls -la dist/
 
-      # NÃO usa actions/upload-artifact (quota do account estourada).
-      # Publica direto na Release do GitHub.
       - name: Publish GitHub Release with APK
         uses: softprops/action-gh-release@v2
         with:
