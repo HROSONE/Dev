@@ -34,6 +34,14 @@ sealed class AgentExecutionEvent {
     ) : AgentExecutionEvent()
 }
 
+data class WorkspaceSyncResult(
+    val copiedFiles: Int,
+    val failedFiles: List<String>,
+    val errors: List<String>
+) {
+    val succeeded: Boolean get() = failedFiles.isEmpty()
+}
+
 /**
  * Motor do DevAgent: conecta o LLM a um loop de ferramentas no workspace local.
  * Emite ThinkingTick e ThoughtStepAdded em tempo real para a UI.
@@ -404,17 +412,43 @@ class DevAgentEngine(
         return output.toString().take(maxContextChars)
     }
 
-    fun syncRepositoryToWorkspace(files: List<RepoFile>) {
-        if (!workspaceRoot.exists()) workspaceRoot.mkdirs()
+    fun syncRepositoryToWorkspace(files: List<RepoFile>): WorkspaceSyncResult {
+        val root = workspaceRoot.canonicalFile
+        if (!root.exists() && !root.mkdirs()) {
+            return WorkspaceSyncResult(
+                copiedFiles = 0,
+                failedFiles = files.map { it.path },
+                errors = listOf("Não foi possível criar o workspace: ${root.path}")
+            )
+        }
+        if (!root.isDirectory) {
+            return WorkspaceSyncResult(
+                copiedFiles = 0,
+                failedFiles = files.map { it.path },
+                errors = listOf("A raiz do workspace não é um diretório: ${root.path}")
+            )
+        }
+
+        var copied = 0
+        val failed = mutableListOf<String>()
+        val errors = mutableListOf<String>()
         for (file in files) {
             try {
-                val target = File(workspaceRoot, file.path).canonicalFile
-                if (!target.toPath().startsWith(workspaceRoot.canonicalFile.toPath())) continue
+                val target = File(root, file.path).canonicalFile
+                if (!target.path.startsWith(root.path)) {
+                    failed += file.path
+                    errors += "Path fora do workspace: ${file.path}"
+                    continue
+                }
                 target.parentFile?.mkdirs()
                 target.writeText(file.content, Charsets.UTF_8)
-            } catch (_: Exception) {
+                copied++
+            } catch (e: Exception) {
+                failed += file.path
+                errors += "${file.path}: ${e.message}"
             }
         }
+        return WorkspaceSyncResult(copied, failed, errors)
     }
 
     companion object {
