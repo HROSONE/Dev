@@ -50,7 +50,14 @@ jobs:
               -dname "CN=Android Debug,O=Android,C=US"
           fi
 
-      # Configuration Cache desligado: task prepareLlamaNativeEngine não é serializável.
+      - name: Fetch llama.cpp Android arm64
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LLAMA_TAG: b9782
+        run: |
+          chmod +x scripts/fetch-llama-android.sh
+          ./scripts/fetch-llama-android.sh
+
       - name: Unit tests
         continue-on-error: true
         run: gradle testDebugUnitTest --no-configuration-cache --stacktrace
