@@ -13,7 +13,6 @@ import com.example.data.model.RepoFile
 import com.example.data.model.ToolCallInfo
 import com.example.data.model.ToolType
 import java.io.File
-import java.io.IOException
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -60,37 +59,88 @@ class DevAgentEngine(
         if (!LlmGateway.isConfigured()) {
             emit(
                 AgentExecutionEvent.Error(
-                    "Configure a API key em Configurações (ícone de engrenagem)."
+                    "Configure a API key em Configurações (ícone de engrenagem) ou baixe o modelo Qwen local."
                 )
             )
             return@flow
         }
 
         val classified = ChatIntentClassifier.classify(userPrompt)
+        // NÃO forçar implementação só porque o modo é BUILD — conversa livre continua conversa.
         val effectiveIntent = when {
-            mode == AgentMode.BUILD && !ChatIntentClassifier.hasExplicitNoChange(userPrompt) ->
-                ChatIntent.IMPLEMENTATION_REQUEST
-            classified == ChatIntent.AMBIGUOUS ->
-                ChatIntent.DISCUSSION
-            else -> classified
+            ChatIntentClassifier.hasExplicitNoChange(userPrompt) -> ChatIntent.DISCUSSION
+            classified == ChatIntent.DISCUSSION ||
+                classified == ChatIntent.EXPLANATION ||
+                classified == ChatIntent.PLANNING -> classified
+            classified == ChatIntent.IMPLEMENTATION_REQUEST -> ChatIntent.IMPLEMENTATION_REQUEST
+            mode == AgentMode.ASK -> ChatIntent.DISCUSSION
+            mode == AgentMode.IMAGINE -> ChatIntent.PLANNING
+            // BUILD + ambíguo: conversa, não código automático
+            else -> ChatIntent.DISCUSSION
         }
 
-        val systemPrompt = buildHarnessSystemPrompt(mode, effectiveIntent, repositoryName, repositoryFiles.isEmpty())
+        val isChatOnly = effectiveIntent == ChatIntent.DISCUSSION ||
+            effectiveIntent == ChatIntent.EXPLANATION
+
+        val systemPrompt = buildHarnessSystemPrompt(
+            mode, effectiveIntent, repositoryName, repositoryFiles.isEmpty(), isChatOnly
+        )
 
         val historyContext = buildConversationHistory(conversationHistory)
-        val repositoryContext = buildRepositoryContext(repositoryFiles)
+        val repositoryContext = if (isChatOnly) "" else buildRepositoryContext(repositoryFiles)
         val promptWithContext = buildString {
             if (historyContext.isNotBlank()) {
-                append("HISTÓRICO DA SESSÃO ATUAL:\n")
+                append("HISTÓRICO DA SESSÃO:\n")
                 append(historyContext)
                 append("\n\n")
             }
-            append("TAREFA DO USUÁRIO:\n")
-            append(userPrompt)
-            if (repositoryContext.isNotBlank()) {
-                append("\n\n")
-                append(repositoryContext)
+            if (isChatOnly) {
+                append("MENSAGEM DO USUÁRIO:\n")
+                append(userPrompt)
+                append("\n\nResponda de forma natural e útil. Não invente JSON de ferramentas.")
+            } else {
+                append("TAREFA DO USUÁRIO:\n")
+                append(userPrompt)
+                if (repositoryContext.isNotBlank()) {
+                    append("\n\n")
+                    append(repositoryContext)
+                }
             }
+        }
+
+        // Caminho rápido de chat: uma única chamada ao modelo, sem loop de tools
+        if (isChatOnly) {
+            val chatResult = LlmGateway.query(
+                prompt = promptWithContext,
+                geminiModelName = speed.modelName,
+                systemInstruction = systemPrompt
+            )
+            val elapsedSeconds = (System.currentTimeMillis() - startedAt) / 1000.0
+            emit(AgentExecutionEvent.ThinkingTick(elapsedSeconds))
+            chatResult.fold(
+                onSuccess = { text ->
+                    emit(
+                        AgentExecutionEvent.FinalResponseChunk(
+                            text = text.trim().ifBlank { "(resposta vazia do modelo)" },
+                            metrics = AgentMetrics(
+                                thinkingSeconds = elapsedSeconds,
+                                commandsExecuted = 0,
+                                filesInspected = 0,
+                                linesChanged = 0,
+                                sandboxLatencyMs = 0
+                            )
+                        )
+                    )
+                },
+                onFailure = { err ->
+                    emit(
+                        AgentExecutionEvent.Error(
+                            err.message ?: "Falha ao conversar com o modelo."
+                        )
+                    )
+                }
+            )
+            return@flow
         }
 
         val fileTools = WorkspaceFileTools(workspaceRoot)
@@ -223,40 +273,47 @@ class DevAgentEngine(
         mode: AgentMode,
         intent: ChatIntent,
         repositoryName: String,
-        isWorkspaceEmpty: Boolean
-    ): String = buildString {
-        append(ChatIntentClassifier.instructionFor(intent)).append("\n\n")
-        append(
-            "Você é o DevAgent Studio, um sistema autônomo de engenharia de software de elite (arquitetura SWE-Agent / Claude Code). " +
-                "Seu foco absoluto é escrever código limpo, completo, modular, sem placeholders e pronto para produção.\n\n" +
-                "CATÁLOGO DE FERRAMENTAS DO HARNESS (JSON):\n" +
-                "Para acionar ferramentas, escreva 1 linha de raciocínio técnico (<thought>...</thought>) seguida do JSON da ferramenta:\n" +
-                "1. Buscar símbolo (classe/função/método): {\"tool\":\"find_symbol\",\"query\":\"NomeDoSimbolo\"}\n" +
-                "2. Buscar texto/regex (grep): {\"tool\":\"search_files\",\"query\":\"padrao\",\"path\":\".\"}\n" +
-                "3. Listar arquivos: {\"tool\":\"list_files\",\"path\":\".\"}\n" +
-                "4. Ler linhas numeradas (ideal para arquivos grandes): {\"tool\":\"read_file_lines\",\"path\":\"arq.kt\",\"start_line\":1,\"end_line\":140}\n" +
-                "5. Ler arquivo inteiro: {\"tool\":\"read_file\",\"path\":\"arq.kt\"}\n" +
-                "6. Edição cirúrgica por trecho (PREFERIDA): {\"tool\":\"edit_file\",\"path\":\"arq.kt\",\"old_text\":\"trecho atual\",\"new_text\":\"novo trecho\"}\n" +
-                "7. Edição cirúrgica por números de linha: {\"tool\":\"patch_lines\",\"path\":\"arq.kt\",\"start_line\":10,\"end_line\":20,\"new_text\":\"novo bloco\"}\n" +
-                "8. Criar arquivo novo ou reescrever: {\"tool\":\"write_file\",\"path\":\"arq.kt\",\"content\":\"código completo\"}\n" +
-                "9. Verificar sintaxe e balanço de chaves: {\"tool\":\"verify_syntax\",\"path\":\"arq.kt\"}\n" +
-                "10. Remover arquivo: {\"tool\":\"delete_file\",\"path\":\"arq.kt\"}\n" +
-                "11. Terminal sandbox (pwd, ls, cat, grep, find, head, tail, wc, tree): {\"tool\":\"run_command\",\"command\":\"tree\"}\n\n" +
-                "DISCIPLINA DE ENGENHARIA (HARNESS RULES):\n" +
-                "• NUNCA abrevie código com '// ... existing code' ou '// resto do código'. Todo código gravado deve ser 100% funcional e compilável.\n" +
-                "• CRIAÇÃO DO ZERO: Se o usuário pedir para criar um projeto/app do zero (ou o workspace estiver vazio), crie uma arquitetura limpa e completa usando write_file para cada arquivo essencial.\n" +
-                "• EVOLUÇÃO DE PROJETOS EXISTENTES: Consulte o RepoMap abaixo, use find_symbol / read_file_lines para inspecionar o código exato antes de editar, e aplique mudanças cirúrgicas com edit_file ou patch_lines.\n" +
-                "• AUTO-VERIFICAÇÃO (SyntaxGuard): Após cada edição, o Harness valida automaticamente chaves {}, parênteses () e sintaxe. Se aparecer [⚠️ HARNESS SYNTAX ERROR], corrija o arquivo imediatamente antes de encerrar.\n"
-        )
-        when (mode) {
-            AgentMode.ASK -> append("Modo ativo: ASK (somente leitura/análise; responda com explicações técnicas e blocos de código claros).")
-            AgentMode.IMAGINE -> append("Modo ativo: PLAN (projete a arquitetura, contratos de dados e passos de implementação; somente leitura).")
-            AgentMode.BUILD -> append("Modo ativo: BUILD (autonomia total para criar projetos do zero, editar múltiplos arquivos e validar sintaxe).")
+        isWorkspaceEmpty: Boolean,
+        isChatOnly: Boolean
+    ): String {
+        if (isChatOnly) {
+            return buildString {
+                append(
+                    "Você é o DevAgent, um assistente de programação amigável e claro. " +
+                        "Converse naturalmente em português (a menos que o usuário escreva em outro idioma). " +
+                        "Responda perguntas, explique ideias, tire dúvidas e converse de forma humana. " +
+                        "NÃO use JSON de ferramentas, NÃO invente tags <thought>, NÃO tente editar arquivos " +
+                        "a menos que o usuário peça explicitamente para implementar/criar/corrigir código.\n\n"
+                )
+                append(ChatIntentClassifier.instructionFor(intent))
+                when (mode) {
+                    AgentMode.ASK -> append("\nModo: Ask (foco em explicar e conversar).")
+                    AgentMode.IMAGINE -> append("\nModo: Plan (pode sugerir planos em texto).")
+                    AgentMode.BUILD -> append("\nModo: Build disponível, mas nesta mensagem só converse; use ferramentas só se o usuário pedir código.")
+                }
+            }
         }
-        if (repositoryName.isNotBlank()) {
-            append(" Projeto ativo: $repositoryName.")
-        } else if (isWorkspaceEmpty) {
-            append(" Workspace pronto para criação de projeto do zero.")
+
+        return buildString {
+            append(ChatIntentClassifier.instructionFor(intent)).append("\n\n")
+            append(
+                "Você é o DevAgent Studio, um sistema autônomo de engenharia de software. " +
+                    "Escreva código limpo, completo e pronto para uso quando for implementar.\n\n" +
+                    "CATÁLOGO DE FERRAMENTAS (JSON em uma linha após <thought>...</thought> se precisar):\n" +
+                    "{\"tool\":\"list_files\",\"path\":\".\"}\n" +
+                    "{\"tool\":\"read_file\",\"path\":\"arq.kt\"}\n" +
+                    "{\"tool\":\"write_file\",\"path\":\"arq.kt\",\"content\":\"...\"}\n" +
+                    "{\"tool\":\"edit_file\",\"path\":\"arq.kt\",\"old_text\":\"...\",\"new_text\":\"...\"}\n" +
+                    "{\"tool\":\"run_command\",\"command\":\"ls\"}\n\n" +
+                    "Só use ferramentas quando for realmente implementar ou inspecionar arquivos.\n"
+            )
+            when (mode) {
+                AgentMode.ASK -> append("Modo: ASK (leitura/análise).")
+                AgentMode.IMAGINE -> append("Modo: PLAN (arquitetura em texto).")
+                AgentMode.BUILD -> append("Modo: BUILD (pode editar arquivos com confirmação).")
+            }
+            if (repositoryName.isNotBlank()) append(" Projeto: $repositoryName.")
+            else if (isWorkspaceEmpty) append(" Workspace vazio.")
         }
     }
 
@@ -279,29 +336,25 @@ class DevAgentEngine(
         if (messages.isEmpty()) return ""
         val recent = messages
             .filter { it.role == MessageRole.USER || (it.role == MessageRole.AGENT && it.text.isNotBlank()) }
-            .takeLast(8)
+            .takeLast(10)
         if (recent.isEmpty()) return ""
         val sb = StringBuilder()
         for (msg in recent) {
-            val speaker = if (msg.role == MessageRole.USER) "USUÁRIO" else "DEVAGENT"
-            val toolsSummary = if (msg.toolCalls.isNotEmpty()) {
-                " [tools: " + msg.toolCalls.joinToString(", ") { "${it.type.displayName}(${it.detail})" } + "]"
-            } else ""
-            sb.append(speaker).append(toolsSummary).append(": ")
-                .append(msg.text.take(1_500)).append("\n")
+            val speaker = if (msg.role == MessageRole.USER) "USUÁRIO" else "ASSISTENTE"
+            sb.append(speaker).append(": ").append(msg.text.take(1_200)).append("\n")
         }
-        return sb.toString().take(8_000)
+        return sb.toString().take(6_000)
     }
 
     private fun buildRepositoryContext(files: List<RepoFile>): String {
         if (files.isEmpty()) {
-            return "STATUS DO WORKSPACE: Vazio (0 arquivos). Se o usuário pedir para criar um projeto ou app do zero, use write_file para criar a estrutura completa de arquivos."
+            return "STATUS DO WORKSPACE: Vazio (0 arquivos)."
         }
         val maxContextChars = 48_000
         val maxPerFileChars = 5_000
         val output = StringBuilder()
         output.append(RepoSymbolIndexer.buildRepoMap(files, maxChars = 20_000))
-        output.append("\nCONTEÚDO DOS ARQUIVOS-CHAVE (use read_file / read_file_lines para ver qualquer arquivo completo):\n")
+        output.append("\nCONTEÚDO DOS ARQUIVOS-CHAVE:\n")
         val prioritized = files.sortedByDescending { it.isModified }.take(10)
         for (file in prioritized) {
             if (output.length >= maxContextChars) break
@@ -375,46 +428,25 @@ class DevAgentEngine(
             )
         }
 
-        root.listFiles()?.forEach { child ->
-            runCatching { child.deleteRecursively() }
-        }
-
         var copied = 0
         val failed = mutableListOf<String>()
         val errors = mutableListOf<String>()
         for (file in files) {
             try {
                 val target = File(root, file.path).canonicalFile
-                if (target == root || !target.toPath().startsWith(root.toPath())) {
-                    throw IOException("Caminho fora dos limites do workspace.")
+                if (!target.path.startsWith(root.path)) {
+                    failed += file.path
+                    errors += "Path fora do workspace: ${file.path}"
+                    continue
                 }
-                if (!target.parentFile.exists() && !target.parentFile.mkdirs()) {
-                    throw IOException("Não foi possível criar a pasta de destino.")
-                }
+                target.parentFile?.mkdirs()
                 target.writeText(file.content, Charsets.UTF_8)
                 copied++
             } catch (e: Exception) {
                 failed += file.path
-                errors += "${file.path}: ${e.message ?: e.javaClass.simpleName}"
+                errors += "${file.path}: ${e.message}"
             }
         }
-        return WorkspaceSyncResult(copiedFiles = copied, failedFiles = failed, errors = errors)
+        return WorkspaceSyncResult(copied, failed, errors)
     }
-}
-
-sealed class ToolLoopEvent {
-    data class Started(
-        val toolName: String,
-        val detail: String,
-        var toolCallId: String? = null
-    ) : ToolLoopEvent()
-
-    data class Completed(
-        val toolName: String,
-        val detail: String,
-        val output: String,
-        val success: Boolean,
-        val durationMs: Long,
-        val toolCallId: String? = null
-    ) : ToolLoopEvent()
 }
