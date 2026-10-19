@@ -50,7 +50,7 @@ class WorkspaceFileToolsTest {
         )
         val tools = WorkspaceFileTools(root)
 
-        val symbolSearch = tools.findSymbol("executeTask", ".", AgentMode.ASK, ChatIntent.EXPLANATION)
+        val symbolSearch = tools.findSymbol("executeTask", AgentMode.ASK, ChatIntent.EXPLANATION)
         assertTrue(symbolSearch is ToolDispatchResult.Executed)
         assertTrue((symbolSearch as ToolDispatchResult.Executed).value.contains("src/Engine.kt:4"))
 
