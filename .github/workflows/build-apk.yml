@@ -46,6 +46,14 @@ jobs:
               -dname "CN=Android Debug,O=Android,C=US"
           fi
 
+      - name: Fetch llama.cpp Android arm64
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LLAMA_TAG: b9782
+        run: |
+          chmod +x scripts/fetch-llama-android.sh
+          ./scripts/fetch-llama-android.sh
+
       - name: Assemble debug APK
         run: |
           CODE=${{ github.run_number }}
@@ -66,6 +74,8 @@ jobs:
           fi
           cp "$APK" "dist/DevAgent-1.1.${{ github.run_number }}.apk"
           ls -la dist/
+          # Confirma que o motor foi empacotado
+          unzip -l "dist/DevAgent-1.1.${{ github.run_number }}.apk" | grep -E 'libllama_server|arm64-v8a' || echo "AVISO: libllama_server não listado no APK"
 
       - name: Publish GitHub Release with APK
         uses: softprops/action-gh-release@v2
@@ -77,6 +87,7 @@ jobs:
 
             - versionCode=${{ github.run_number }}
             - versionName=1.1.${{ github.run_number }}
+            - motor local: llama.cpp android-arm64 (libllama_server.so)
 
             Baixe **DevAgent-1.1.${{ github.run_number }}.apk** e instale no celular
             (permita instalar apps desta fonte se o Android pedir).
