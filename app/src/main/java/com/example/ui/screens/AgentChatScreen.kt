@@ -282,7 +282,6 @@ private fun parseMessageSegments(rawText: String): List<MessageSegment> {
     return if (segments.isEmpty()) listOf(MessageSegment.Prose(rawText)) else segments
 }
 
-/** Detecta HTML pelo idioma da fence ou pelo conteúdo. */
 private fun isHtmlCode(language: String, code: String): Boolean {
     val lang = language.lowercase().trim()
     if (lang in setOf("html", "htm", "xhtml")) return true
@@ -485,18 +484,11 @@ private fun HtmlPreviewWebView(
             }
         },
         update = { webView ->
-            webView.loadDataWithBaseURL(
-                /* baseUrl = */ null,
-                /* data = */ document,
-                /* mimeType = */ "text/html",
-                /* encoding = */ "UTF-8",
-                /* historyUrl = */ null
-            )
+            webView.loadDataWithBaseURL(null, document, "text/html", "UTF-8", null)
         }
     )
 }
 
-/** Garante documento HTML completo para o WebView renderizar bem. */
 private fun wrapHtmlDocument(raw: String): String {
     val trimmed = raw.trim()
     if (trimmed.contains("<html", ignoreCase = true)) return trimmed
@@ -601,7 +593,7 @@ fun EmptyAgentState(
                 accentColor = AccentCyan,
                 onClick = { onSelectPreset(prompt) }
             )
-            Spacer(modifier.height(6.dp))
+            Spacer(Modifier.height(6.dp))
         }
     }
 }
