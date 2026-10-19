@@ -229,9 +229,11 @@ class DevAgentEngine(
                 return@channelFlow
             }
 
-            val noChange = ChatIntentClassifier.hasExplicitNoChange(userPrompt)
-            val intent = when {
-                mode == AgentMode.BUILD && !noChange -> ChatIntent.IMPLEMENTATION_REQUEST
+            // No Build o usuário já autorizou escrita ao escolher o modo: quem decide se edita é o
+            // modelo (que respeita "não altere nada" no próprio pedido). O classificador por regex
+            // gerava falsos "somente leitura" e bloqueios de política.
+            val intent = when (mode) {
+                AgentMode.BUILD -> ChatIntent.IMPLEMENTATION_REQUEST
                 else -> ChatIntentClassifier.classify(userPrompt).let {
                     if (it == ChatIntent.IMPLEMENTATION_REQUEST) ChatIntent.PLANNING else it
                 }
@@ -240,7 +242,6 @@ class DevAgentEngine(
             val workspace = withContext(Dispatchers.IO) { snapshotWorkspace() }
             status(
                 "${LlmGateway.statusLabel()} · modo ${mode.label}" +
-                    (if (mode == AgentMode.BUILD && noChange) " (somente leitura a pedido)" else "") +
                     " · workspace com ${workspace.size} arquivo(s)"
             )
 
@@ -355,7 +356,7 @@ class DevAgentEngine(
                     if (finalRound == 0) remove("n${stats.rounds}")
 
                     // Fallback para modelos que não usam ferramentas: grava blocos com nome de arquivo explícito.
-                    if (mode == AgentMode.BUILD && !noChange && stats.created.isEmpty() && stats.modified.isEmpty()) {
+                    if (mode == AgentMode.BUILD && stats.created.isEmpty() && stats.modified.isEmpty()) {
                         persistExtractedCodeBlocksIfApproved(
                             modelResponse = result.text,
                             confirmMutation = confirmMutation,
@@ -421,7 +422,8 @@ class DevAgentEngine(
         repositoryName: String
     ): List<LlmMessage> {
         val messages = mutableListOf<LlmMessage>()
-        for (msg in history.filter { it.role != MessageRole.SYSTEM && !it.isThinking }.takeLast(MAX_HISTORY_MESSAGES)) {
+        val usable = history.filter { it.role != MessageRole.SYSTEM && !it.isThinking && !isFailureNotice(it) }
+        for (msg in usable.takeLast(MAX_HISTORY_MESSAGES)) {
             val content = when (msg.role) {
                 MessageRole.USER -> msg.text
                 else -> summarizeAgentTurn(msg)
@@ -455,6 +457,17 @@ class DevAgentEngine(
         return messages
     }
 
+    /**
+     * Erros e interrupções de execuções anteriores não entram no histórico: modelos pequenos
+     * copiavam a frase ("A política de segurança negou…") como se fosse a resposta atual.
+     */
+    private fun isFailureNotice(msg: ChatMessage): Boolean {
+        if (msg.role != MessageRole.AGENT) return false
+        val text = msg.text.trim()
+        return text.startsWith("⚠️") || text.startsWith("⏹") ||
+            LEGACY_FAILURE_PHRASES.any { text.contains(it, ignoreCase = true) }
+    }
+
     /** Versão compacta de uma resposta anterior do agente para o histórico do modelo. */
     private fun summarizeAgentTurn(msg: ChatMessage): String {
         val prose = WorkspaceCodeAutoSaver.parseRichSegments(msg.text).joinToString("\n") { segment ->
@@ -482,10 +495,13 @@ class DevAgentEngine(
             .map { WorkspaceCodeAutoSaver.normalizeHtmlTypo(it.groupValues[1]).trim().removePrefix("./") }
             .map { it.lowercase() }
             .toSet()
-        if (explicitPaths.isEmpty()) return
         val cards = WorkspaceCodeAutoSaver.parseRichSegments(modelResponse)
             .filterIsInstance<RichMessageSegment.CodeCard>()
-            .filter { it.filePath.trim().removePrefix("./").lowercase() in explicitPaths }
+            .filter { card ->
+                card.filePath.trim().removePrefix("./").lowercase() in explicitPaths ||
+                    // Documento HTML completo sem nome (comum em modelos locais pequenos) → index.html.
+                    (card.filePath.equals("index.html", ignoreCase = true) && isCompleteHtmlDocument(card.code))
+            }
         if (cards.isEmpty()) return
 
         val root = workspaceRoot.canonicalFile
@@ -546,6 +562,11 @@ class DevAgentEngine(
         }
     }
 
+    private fun isCompleteHtmlDocument(code: String): Boolean {
+        val lower = code.trimStart().lowercase()
+        return (lower.startsWith("<!doctype html") || lower.startsWith("<html")) && code.contains("</html>", ignoreCase = true)
+    }
+
     /**
      * Garante o card de código com ▶ Play para páginas HTML gravadas via ferramenta quando a
      * resposta final não trouxe o código (outros arquivos aparecem como diff nos cards de ferramenta).
@@ -588,6 +609,8 @@ class DevAgentEngine(
             - Use ferramentas para obter fatos. Nunca invente conteúdo de arquivos nem resultados.
             - Você pode chamar várias ferramentas independentes na mesma resposta (ex.: ler 3 arquivos de uma vez).
             - Se o pedido for só conversa ou uma dúvida que não depende dos arquivos, responda direto, sem ferramentas.
+            - Se o usuário pedir explicitamente para não alterar nada, apenas leia e responda.
+            - Erros ou bloqueios de mensagens antigas não valem mais. Nunca responda que "a política negou" sem ter recebido esse erro de uma ferramenta NESTA tarefa.
             - Ao terminar, responda SEM nenhum JSON de ferramenta: resuma o que foi feito (arquivos criados/editados) e, se fizer sentido, os próximos passos. Não repita o código inteiro que já foi gravado.
 
             EFICIÊNCIA COM ARQUIVOS
@@ -622,11 +645,7 @@ class DevAgentEngine(
         append("\n\n")
         when (mode) {
             AgentMode.BUILD ->
-                if (intent == ChatIntent.IMPLEMENTATION_REQUEST) {
-                    append("MODO BUILD: você pode criar, editar e remover arquivos do workspace (o app pode pedir aprovação do usuário).")
-                } else {
-                    append("MODO BUILD (o usuário pediu para NÃO alterar nada agora): apenas leia, analise e responda.")
-                }
+                append("MODO BUILD: você TEM permissão para criar, editar e remover arquivos do workspace (o app pode pedir aprovação do usuário).")
             AgentMode.ASK ->
                 append("MODO ASK (somente leitura): investigue com ferramentas de leitura e explique. Não tente alterar arquivos; se algo precisar mudar, mostre a sugestão.")
             AgentMode.IMAGINE ->
@@ -698,6 +717,12 @@ class DevAgentEngine(
         private const val SMALL_WORKSPACE_INLINE_CHARS = 9_000
         private val IGNORED_DIRS = setOf(".git", "node_modules", "build", ".gradle", "dist", ".idea", "__pycache__")
         private val READ_TOOLS = setOf("read_file", "read_file_lines")
+        private val LEGACY_FAILURE_PHRASES = listOf(
+            "política de segurança negou",
+            "Nenhuma alteração não confirmada",
+            "Nenhuma alteração foi aplicada",
+            "foi recusada ou cancelada"
+        )
         private val explicitFenceRegex =
             Regex("""```[A-Za-z0-9_+\-]*[ \t]+([A-Za-z0-9_\-./]+\.[A-Za-z0-9]{1,8})[ \t]*\n""")
 
