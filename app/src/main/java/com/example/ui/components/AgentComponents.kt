@@ -311,10 +311,23 @@ fun ToolExecutionCard(
                 ExecutionStatus.AWAITING_CONFIRMATION -> AccentYellow
                 ExecutionStatus.PENDING -> TextMuted
             }
-            Box(Modifier.size(6.dp).clip(CircleShape).background(statusColor))
+            Box(
+                Modifier
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(statusColor)
+            )
             Spacer(Modifier.width(8.dp))
-            Row(Modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Code, null, tint = TextMuted, modifier = Modifier.size(14.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(
+                    Icons.Default.Code,
+                    contentDescription = null,
+                    tint = TextMuted,
+                    modifier = Modifier.size(14.dp)
+                )
                 Spacer(Modifier.width(4.dp))
                 Text(
                     tool.type.displayName,
@@ -337,7 +350,7 @@ fun ToolExecutionCard(
             }
         }
         AnimatedVisibility(visible = tool.isExpanded) {
-            Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+            Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 if (tool.diffLines.isNotEmpty()) {
                     DiffView(lines = tool.diffLines)
                 }
