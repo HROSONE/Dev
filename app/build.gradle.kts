@@ -16,11 +16,13 @@ android {
     applicationId = "com.aistudio.devagent.rkqxpl"
     minSdk = 24
     targetSdk = 36
-    // CI sobrescreve via -PversionCode / -PversionName quando disponível
     versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 2
     versionName = (project.findProperty("versionName") as String?) ?: "1.1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    ndk {
+      abiFilters += listOf("arm64-v8a")
+    }
   }
 
   signingConfigs {
@@ -70,55 +72,140 @@ android {
   }
 }
 
-// Baixa e empacota automaticamente o motor nativo Android arm64 do llama.cpp (libllama_server.so + libs)
-// em src/main/jniLibs/arm64-v8a durante o assembleDebug/assembleRelease sem precisar alterar .github/workflows.
+/**
+ * Baixa o binário oficial Android arm64 do ggml-org/llama.cpp e empacota em
+ * src/main/jniLibs/arm64-v8a/ como libllama_server.so (+ libs .so).
+ * Android extrai jniLibs e permite executar lib*.so via ProcessBuilder.
+ */
 val prepareLlamaNativeEngine by tasks.registering {
-  val jniArm64Dir = file("src/main/jniLibs/arm64-v8a")
-  onlyIf { !file("src/main/jniLibs/arm64-v8a/libllama_server.so").exists() }
+  val jniArm64Dir = layout.projectDirectory.dir("src/main/jniLibs/arm64-v8a")
+  outputs.dir(jniArm64Dir)
+  // Reexecuta se o server ainda não existir (CI limpo)
+  outputs.upToDateWhen {
+    jniArm64Dir.file("libllama_server.so").asFile.isFile &&
+      jniArm64Dir.file("libllama_server.so").asFile.length() > 50_000L
+  }
   doLast {
-    jniArm64Dir.mkdirs()
-    try {
-      val pyScript = listOf(
-        "import json, os, shutil, sys, tarfile, urllib.request",
-        "jni_dir = sys.argv[1]",
-        "os.makedirs(jni_dir, exist_ok=True)",
-        "req = urllib.request.Request('https://api.github.com/repos/ggml-org/llama.cpp/releases/latest', headers={'User-Agent': 'DevAgent-Gradle'})",
-        "data = json.loads(urllib.request.urlopen(req, timeout=30).read().decode('utf-8'))",
-        "urls = [a.get('browser_download_url') for a in data.get('assets', []) if a.get('name', '').endswith('-bin-android-arm64.tar.gz')]",
-        "if urls:",
-        "    archive = '/tmp/llama-android-arm64.tar.gz'",
-        "    urllib.request.urlretrieve(urls[0], archive)",
-        "    extract_dir = '/tmp/llama_android_extract'",
-        "    shutil.rmtree(extract_dir, ignore_errors=True)",
-        "    os.makedirs(extract_dir, exist_ok=True)",
-        "    tarfile.open(archive, 'r:gz').extractall(extract_dir)",
-        "    for root, _, files in os.walk(extract_dir):",
-        "        for f in files:",
-        "            full = os.path.realpath(os.path.join(root, f))",
-        "            if not os.path.isfile(full): continue",
-        "            if f == 'llama-server':",
-        "                dst = os.path.join(jni_dir, 'libllama_server.so')",
-        "                shutil.copy2(full, dst); os.chmod(dst, 0o755)",
-        "            elif f.startswith('lib') and '.so' in f:",
-        "                dst = os.path.join(jni_dir, f.split('.so')[0] + '.so')",
-        "                shutil.copy2(full, dst); os.chmod(dst, 0o755)",
-        "for nr in ['/usr/local/lib/android/sdk/ndk', os.environ.get('ANDROID_HOME', '') + '/ndk', os.environ.get('ANDROID_SDK_ROOT', '') + '/ndk']:",
-        "    if os.path.isdir(nr):",
-        "        for r, _, fs in os.walk(nr):",
-        "            if 'libc++_shared.so' in fs and 'aarch64-linux-android' in r:",
-        "                dst = os.path.join(jni_dir, 'libc++_shared.so')",
-        "                if not os.path.exists(dst): shutil.copy2(os.path.join(r, 'libc++_shared.so'), dst); os.chmod(dst, 0o755)",
-        "                break"
-      ).joinToString("\n")
-      val proc = ProcessBuilder("python3", "-c", pyScript, jniArm64Dir.absolutePath).inheritIO().start()
-      proc.waitFor()
-    } catch (e: Exception) {
-      println("Aviso: falha opcional ao empacotar llama-server: " + e.message)
+    val outDir = jniArm64Dir.asFile
+    outDir.mkdirs()
+    val serverSo = File(outDir, "libllama_server.so")
+    if (serverSo.isFile && serverSo.length() > 50_000L) {
+      logger.lifecycle("llama.cpp já empacotado: ${serverSo.absolutePath} (${serverSo.length()} bytes)")
+      return@doLast
     }
+
+    val pyScript = """
+import json, os, shutil, sys, tarfile, urllib.request
+
+jni_dir = sys.argv[1]
+os.makedirs(jni_dir, exist_ok=True)
+
+def fetch(url):
+    req = urllib.request.Request(url, headers={
+        'User-Agent': 'DevAgent-Gradle',
+        'Accept': 'application/vnd.github+json',
+    })
+    return urllib.request.urlopen(req, timeout=60).read()
+
+url = None
+# Procura nas releases recentes o asset android-arm64 oficial
+for page in range(1, 4):
+    raw = fetch(f'https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=30&page={page}')
+    releases = json.loads(raw.decode('utf-8'))
+    for rel in releases:
+        for a in rel.get('assets', []):
+            name = a.get('name', '')
+            if name.endswith('-bin-android-arm64.tar.gz') or name.endswith('bin-android-arm64.tar.gz'):
+                url = a.get('browser_download_url')
+                print('Encontrado:', name, 'tag=', rel.get('tag_name'))
+                break
+        if url:
+            break
+    if url:
+        break
+
+if not url:
+    # Fallback pin conhecido (quando rate-limit ou asset sumiu do latest)
+    url = 'https://github.com/ggml-org/llama.cpp/releases/download/b9782/llama-b9782-bin-android-arm64.tar.gz'
+    print('Usando fallback pin b9782:', url)
+
+archive = '/tmp/llama-android-arm64.tar.gz'
+print('Baixando', url)
+urllib.request.urlretrieve(url, archive)
+extract_dir = '/tmp/llama_android_extract'
+shutil.rmtree(extract_dir, ignore_errors=True)
+os.makedirs(extract_dir, exist_ok=True)
+tarfile.open(archive, 'r:gz').extractall(extract_dir)
+
+copied = []
+for root, _, files in os.walk(extract_dir):
+    for f in files:
+        full = os.path.realpath(os.path.join(root, f))
+        if not os.path.isfile(full):
+            continue
+        # llama-server vira libllama_server.so (Android empacota/executa libs nativas)
+        if f == 'llama-server' or f == 'llama-server.exe':
+            dst = os.path.join(jni_dir, 'libllama_server.so')
+            shutil.copy2(full, dst)
+            os.chmod(dst, 0o755)
+            copied.append(dst)
+            print('server ->', dst, os.path.getsize(dst))
+        elif f.endswith('.so') or (f.startswith('lib') and '.so' in f):
+            # normaliza nome (libfoo.so.1 -> libfoo.so)
+            base = f
+            if '.so.' in f:
+                base = f.split('.so')[0] + '.so'
+            dst = os.path.join(jni_dir, base)
+            if not os.path.exists(dst):
+                shutil.copy2(full, dst)
+                os.chmod(dst, 0o755)
+                copied.append(dst)
+                print('lib ->', dst)
+
+# libc++_shared do NDK se disponível no runner
+for nr in [
+    os.environ.get('ANDROID_NDK_HOME', ''),
+    os.environ.get('ANDROID_NDK_ROOT', ''),
+    os.environ.get('ANDROID_HOME', '') + '/ndk',
+    os.environ.get('ANDROID_SDK_ROOT', '') + '/ndk',
+    '/usr/local/lib/android/sdk/ndk',
+]:
+    if not nr or not os.path.isdir(nr):
+        continue
+    for r, _, fs in os.walk(nr):
+        if 'libc++_shared.so' in fs and 'aarch64-linux-android' in r:
+            dst = os.path.join(jni_dir, 'libc++_shared.so')
+            if not os.path.exists(dst):
+                shutil.copy2(os.path.join(r, 'libc++_shared.so'), dst)
+                os.chmod(dst, 0o755)
+                print('libc++_shared ->', dst)
+            break
+
+server = os.path.join(jni_dir, 'libllama_server.so')
+if not os.path.isfile(server) or os.path.getsize(server) < 50000:
+    raise SystemExit('Falha: libllama_server.so não foi gerado após o download do llama.cpp android-arm64')
+print('OK llama.cpp empacotado:', len(copied), 'arquivos')
+""".trimIndent()
+
+    val scriptFile = File(temporaryDir, "prepare_llama.py")
+    scriptFile.writeText(pyScript)
+    val proc = ProcessBuilder("python3", scriptFile.absolutePath, outDir.absolutePath)
+      .inheritIO()
+      .start()
+    val code = proc.waitFor()
+    if (code != 0 || !serverSo.isFile || serverSo.length() < 50_000L) {
+      throw GradleException(
+        "Não foi possível empacotar libllama_server.so (exit=$code). " +
+          "Verifique rede/GitHub API e o asset *-bin-android-arm64.tar.gz."
+      )
+    }
+    logger.lifecycle("llama.cpp OK: ${serverSo.length()} bytes")
   }
 }
 
-tasks.matching { it.name == "mergeDebugJniLibFolders" || it.name == "mergeReleaseJniLibFolders" }.configureEach {
+tasks.matching {
+  it.name == "mergeDebugJniLibFolders" || it.name == "mergeReleaseJniLibFolders"
+}.configureEach {
   dependsOn(prepareLlamaNativeEngine)
 }
 
